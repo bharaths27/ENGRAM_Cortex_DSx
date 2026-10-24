@@ -40,6 +40,7 @@ the Mac's local IP address instead of localhost.
 pip install -r requirements-vision.txt
 python scripts/make_tags.py --mm 30 --out tags.pdf    # print at 100% scale
 python scripts/overhead_camera.py --show              # with the server running
+python scripts/overhead_camera.py --show --gestures   # also hand gestures, see perception/README.md
 ```
 
 Tags 1 to 4 go on the objects. Tags 10 to 14 go flat on the table in the middle
@@ -105,7 +106,12 @@ images, not yet on the real webcam).
 Also written: the robot agent for the MasterPi (`robot_agent/`) and the Mac side
 adapter. Tested with a fake driver; the Hiwonder calls are not checked on the robot yet.
 
-Not built yet: measured routes on the real table, voice in and out, the llama.cpp model on the Jetson, and the iPad page.
+Also written: the voice client (`perception/voice.py`) and hand gestures for the
+overhead camera (`--gestures`): open palm stops, pointing selects an object, thumb out
+proposes return to rest. Tested with simulated hands and typed input, not yet with the
+real camera, microphone or hands.
+
+Not built yet: measured routes on the real table, spoken replies through Piper, the llama.cpp model on the Jetson, and the iPad page.
 
 ## Team
 

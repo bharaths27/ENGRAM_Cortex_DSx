@@ -252,7 +252,7 @@ def main():
                 print("  (nothing heard)\n")
                 continue
             if not args.no_pointing:
-                from .gestures import recent_pointing
+                from engram.vision.gestures import recent_pointing
                 filled = fill_pointing(text, recent_pointing(args.pointing_age))
                 if filled != text:
                     print(f"  pointing: \"{text}\" -> \"{filled}\"")

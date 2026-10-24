@@ -1,6 +1,4 @@
-# Extra packages for perception/ (on top of the repo's requirements.txt)
-opencv-python>=4.8      # overhead tag reader (includes ArUco)
+# Extra packages for the voice client (on top of the repo's requirements.txt)
 numpy
 sounddevice             # microphone
 faster-whisper          # speech to text, runs locally; model downloads once
-mediapipe               # hand gestures (optional, only for --gestures); needs Python 3.9-3.12

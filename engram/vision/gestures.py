@@ -12,7 +12,7 @@ Three gestures. None of them moves the robot by itself:
     thumb out, held  -> PROPOSES "return to rest" (drive to home). Like every plan,
                         it only runs after a person approves it
 
-Used by `python -m perception.overhead_tags run --gestures` (same camera, same frame).
+Used by `python scripts/overhead_camera.py --gestures` (same camera, same frames as the tag reader).
 The functions below are plain math on hand landmarks so they can be tested without a camera.
 
 Hand landmarks (MediaPipe numbering, image coordinates 0..1):
@@ -226,3 +226,104 @@ class HandTracker:
             name, score = (g.category_name, g.score) if g else ("None", 0.0)
             out.append(Hand(pts, classify(pts, name, score), name, score))
         return out
+
+
+# ---------------------------------------------------------------------------
+# Turning gestures into requests to the ENGRAM server
+# ---------------------------------------------------------------------------
+def _post(url: str, body: dict | None) -> dict:
+    data = json.dumps(body).encode() if body is not None else b""
+    req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read() or b"{}")
+
+
+class GestureActions:
+    """Open palm -> stop. Pointing -> which object. Thumb out -> propose return to rest.
+
+    Called once per camera frame with that frame's tag detections, so it knows where every
+    tag is. Hold times are in seconds and turned into frames using the camera loop's rate.
+    """
+
+    def __init__(self, server: str, arena: dict, fps: float, palm_stop: bool = True, thumb_rest: bool = True,
+                 palm_s: float = 0.3, point_s: float = 0.25, thumb_s: float = 0.4, tracker=None):
+        frames = lambda s: max(2, round(s * fps))  # noqa: E731
+        self.server, self.palm_stop, self.thumb_rest = server.rstrip("/"), palm_stop, thumb_rest
+        self.rest_zone = arena.get("start_zone", "home")
+        self.by_tag = {o["tag"]: o for o in arena["objects"]}
+        self.tracker = tracker or HandTracker()
+        self.palm, self.point, self.thumb = HoldFilter(frames(palm_s)), HoldFilter(frames(point_s)), HoldFilter(frames(thumb_s))
+        self.hands: list[Hand] = []
+        self.ray = None
+        self.target = None
+
+    def _say(self, msg: str) -> None:
+        print(f"  {time.strftime('%H:%M:%S')}  {msg}")
+
+    def update(self, frame, detections, zone_of_tag: dict[int, str]) -> None:
+        """detections: objects with .tag_id, .cx, .cy. zone_of_tag: object tag -> zone, from assign_zones."""
+        self.hands = self.tracker.hands(frame)
+
+        # 1. Open palm held -> stop. Fires once each time a palm is newly held up.
+        palm_up = any(h.label == "open_palm" for h in self.hands)
+        held, changed = self.palm.update(palm_up)
+        if changed and held:
+            if not self.palm_stop:
+                self._say("open palm seen (stop disabled)")
+            else:
+                try:
+                    _post(self.server + "/stop", None)
+                    self._say("OPEN PALM -> STOP sent")
+                except OSError as e:
+                    self._say(f"open palm seen but could not reach the server to stop: {e}")
+
+        # 2. Thumb out held -> propose "return to rest". Runs only after a person approves it.
+        held, changed = self.thumb.update(not palm_up and any(h.label == "thumb" for h in self.hands))
+        if changed and held:
+            if not self.thumb_rest:
+                self._say("thumb seen (return to rest disabled)")
+            else:
+                try:
+                    r = _post(self.server + "/plan/rest", {"zone": self.rest_zone})
+                    state = "waiting for approval" if r.get("status") == "proposed" else "rejected by the checker"
+                    self._say(f"THUMB -> return to {self.rest_zone} proposed, {state} (operation {r.get('operation_id')})")
+                except OSError as e:
+                    self._say(f"thumb seen but could not reach the server: {e}")
+
+        # 3. Pointing -> the object tag closest to the pointing line.
+        objects = {d.tag_id: (d.cx, d.cy) for d in detections if d.tag_id in self.by_tag}
+        self.ray, target = None, None
+        for h in self.hands:
+            if h.label == "pointing":
+                tip, direction = pointing_ray(h.landmarks)
+                self.ray = (tip, direction)
+                target = object_pointed_at(tip, direction, objects, touch_radius=0.6 * hand_size(h.landmarks))
+                break
+        self.target, changed = self.point.update(target)
+        if changed and self.target is not None:
+            obj = self.by_tag[self.target]
+            zone = zone_of_tag.get(self.target)
+            save_pointing(obj["id"], obj["name"], self.target, zone)
+            self._say(f"POINTING -> {obj['name']}" + (f" at {zone}" if zone else ""))
+            if zone:  # a fresh sighting, so the robot does not have to search for it
+                try:
+                    _post(self.server + "/observations/tag", {"tag_id": self.target, "zone": zone})
+                except OSError:
+                    pass
+
+    def draw(self, frame, detections) -> None:
+        import cv2
+
+        colors = {"open_palm": (60, 60, 230), "pointing": (0, 200, 255), "thumb": (200, 120, 255)}
+        for h in self.hands:
+            color = colors.get(h.label, (180, 180, 180))
+            for x, y in h.landmarks:
+                cv2.circle(frame, (int(x), int(y)), 3, color, -1)
+            cv2.putText(frame, h.label, (int(h.landmarks[0][0]), int(h.landmarks[0][1]) + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        if self.ray:
+            (x, y), (dx, dy) = self.ray
+            cv2.line(frame, (int(x), int(y)), (int(x + dx * 2000), int(y + dy * 2000)), colors["pointing"], 2)
+        for d in detections:
+            if d.tag_id == self.target:
+                cv2.circle(frame, (int(d.cx), int(d.cy)), 45, colors["pointing"], 3)

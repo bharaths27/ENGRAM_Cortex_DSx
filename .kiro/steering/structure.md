@@ -13,7 +13,8 @@
 - engram/api.py          HTTP endpoints for the iPad
 - engram/robot/          mock robot and MasterPi adapter
 - robot_agent/           runs ON the MasterPi; the only code that touches motors (driver.py)
-- engram/vision/         overhead ArUco tag reader (zone tags 10 to 14)
+- engram/vision/         overhead ArUco tag reader (zone tags 10 to 14) and hand gestures
+- perception/voice.py    push-to-talk voice client: local speech to text, sends text to /commands
 - fixtures/lab/          made up arena, SOP and sample list
 - scripts/demo_cli.py    whole demo story in the terminal
 - tests/                 pytest and hypothesis tests

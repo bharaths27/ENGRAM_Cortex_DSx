@@ -3,6 +3,7 @@
     python scripts/overhead_camera.py                  # camera 0, server on localhost
     python scripts/overhead_camera.py --camera 1 --show
     python scripts/overhead_camera.py --url http://192.168.1.20:8000
+    python scripts/overhead_camera.py --show --gestures  # also hand gestures (needs mediapipe)
 
 Needs: pip install opencv-contrib-python
 Start the server first (uvicorn --factory engram.api:create_app --port 8000).
@@ -33,15 +34,26 @@ def main() -> int:
     ap.add_argument("--camera", type=int, default=0)
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--arena", default=str(ROOT / "fixtures/lab/arena.json"))
-    ap.add_argument("--fps", type=float, default=5.0)
+    ap.add_argument("--fps", type=float, default=None, help="frames per second (default 5, or 15 with --gestures)")
     ap.add_argument("--show", action="store_true", help="open a preview window")
+    ap.add_argument("--gestures", action="store_true",
+                    help="also watch hands: open palm = stop, point = select object, thumb out = propose return to rest")
+    ap.add_argument("--no-palm-stop", action="store_true", help="with --gestures, show palms but don't send stop")
+    ap.add_argument("--no-thumb-rest", action="store_true", help="with --gestures, show thumbs but don't propose")
     args = ap.parse_args()
+    fps = args.fps or (15.0 if args.gestures else 5.0)
 
     import cv2
 
     arena = json.loads(Path(args.arena).read_text())
     zone_tags = {int(k): v for k, v in arena["zone_tags"].items()}
     names = {o["tag"]: o["name"] for o in arena["objects"]}
+    gestures = None
+    if args.gestures:
+        from engram.vision.gestures import GestureActions
+        gestures = GestureActions(args.url, arena, fps, palm_stop=not args.no_palm_stop,
+                                  thumb_rest=not args.no_thumb_rest)
+        print("gestures on: open palm = STOP, point = select object, thumb out = propose return to rest")
     cam = cv2.VideoCapture(args.camera)
     cam.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
@@ -57,7 +69,10 @@ def main() -> int:
                 time.sleep(0.2)
                 continue
             dets = detect(frame)
-            for tag, zone in debounce.update(assign_zones(dets, zone_tags)).items():
+            zones_now = assign_zones(dets, zone_tags)
+            if gestures:
+                gestures.update(frame, dets, zones_now)
+            for tag, zone in debounce.update(zones_now).items():
                 print(f"{names.get(tag, tag)} -> {zone}")
                 try:
                     post(f"{args.url}/observations/tag", {"tag_id": tag, "zone": zone})
@@ -68,10 +83,12 @@ def main() -> int:
                 for d in dets:
                     label = zone_tags.get(d.tag_id) or names.get(d.tag_id, str(d.tag_id))
                     cv2.putText(frame, label, (int(d.cx), int(d.cy)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                if gestures:
+                    gestures.draw(frame, dets)
                 cv2.imshow("ENGRAM overhead", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
-            time.sleep(1.0 / args.fps)
+            time.sleep(1.0 / fps)
     except KeyboardInterrupt:
         pass
     cam.release()

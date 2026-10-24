@@ -1,6 +1,6 @@
 """Tests for gesture geometry and the 'that one' fill-in. No camera or MediaPipe needed."""
 
-from perception.gestures import (
+from engram.vision.gestures import (
     HoldFilter, classify, object_pointed_at, pointing_ray, recent_pointing, save_pointing,
 )
 from perception.voice import fill_pointing
