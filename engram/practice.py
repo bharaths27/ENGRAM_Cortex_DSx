@@ -31,6 +31,8 @@ def behavior(resp: dict[str, Any]) -> str:
     """Same reading as the EC15 scorer: act | ask | refuse | schedule | answer | other."""
     if resp.get("kind") == "scheduled":
         return "schedule"
+    if resp.get("kind") == "answer":
+        return "answer"
     if resp.get("status") == "refused":
         return "ask" if str(resp.get("reason", "")).strip().endswith("?") else "refuse"
     ops = [s.get("op") for s in (resp.get("plan") or {}).get("steps", [])]

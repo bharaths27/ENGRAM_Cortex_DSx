@@ -49,6 +49,17 @@ def route(question: str) -> list[str]:
     return [kind for kind, pattern in ROUTES if re.search(pattern, q)] or ["semantic"]
 
 
+# "Could you fetch the beaker?" is a request, not a memory question.
+_POLITE_REQUEST = re.compile(r"^\s*(can|could|would|will)\s+you\b|^\s*please\b", re.IGNORECASE)
+
+
+def is_memory_question(text: str) -> bool:
+    """A question that asks what memory holds (where / what happened / what was said / what is
+    pending...). Plain questions with no memory shape, and polite requests, are left to the planner."""
+    t = text.strip()
+    return t.endswith("?") and not _POLITE_REQUEST.match(t) and route(t) != ["semantic"]
+
+
 def topic_terms(question: str, objs: list[ObjectState]) -> list[str] | None:
     """What the question is about: known object names, else its content words.
     None means a general question ("what happened?") that matches everything."""
@@ -81,7 +92,10 @@ class Recall:
         missing = [f"current location of {o.name}" for o in objs if o.stale]
         if not answers:
             missing.append(f"nothing in {'/'.join(kinds)} memory about this")
-        return {"question": question, "kinds": kinds, "answers": answers, "missing": missing}
+        reply = answers[0]["text"] if answers else "I have no record of that."
+        if missing and answers:
+            reply += " Unknown: " + "; ".join(missing) + "."
+        return {"question": question, "kinds": kinds, "answers": answers, "missing": missing, "reply": reply}
 
     def spatial(self, question: str, objs: list[ObjectState]) -> list[dict[str, Any]]:
         return [{"text": o.describe(), "object_id": o.object_id, "freshness": o.freshness} for o in objs]
