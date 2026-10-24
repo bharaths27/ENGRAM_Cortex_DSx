@@ -51,6 +51,10 @@ class Engine:
 
     # ---- setup -----------------------------------------------------------
 
+    def set_robot(self, robot: RobotAdapter) -> None:
+        self.robot = robot
+        self.executor.robot = robot
+
     def load_arena(self, arena: dict[str, Any]) -> None:
         """Bind tagged objects from the arena file. Locations come only from observations."""
         for o in arena["objects"]:

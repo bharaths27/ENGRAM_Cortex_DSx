@@ -12,6 +12,7 @@
 - engram/engine.py       ties it together; API and demo only call this
 - engram/api.py          HTTP endpoints for the iPad
 - engram/robot/          mock robot and MasterPi adapter
+- robot_agent/           runs ON the MasterPi; the only code that touches motors (driver.py)
 - engram/vision/         overhead ArUco tag reader (zone tags 10 to 14)
 - fixtures/lab/          made up arena, SOP and sample list
 - scripts/demo_cli.py    whole demo story in the terminal

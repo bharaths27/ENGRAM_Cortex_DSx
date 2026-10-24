@@ -8,6 +8,8 @@ Environment:
     ENGRAM_ARENA   arena file (default fixtures/lab/arena.json)
     ENGRAM_MODELS  folder of model files to fingerprint (optional)
     ENGRAM_UI      folder with the built Lovable page to serve at / (optional)
+    ENGRAM_ROBOT_URL  robot agent on the MasterPi, e.g. http://192.168.1.50:8100.
+                      Leave unset to use the fake robot.
 """
 
 from __future__ import annotations
@@ -69,8 +71,14 @@ def default_engine() -> Engine:
     arena = json.loads(arena_path.read_text())
     engine = Engine(connect(os.environ.get("ENGRAM_DB", "engram.db")), MockRobot(arena), set(arena["zones"]),
                     models_dir=os.environ.get("ENGRAM_MODELS"))
+    robot_url = os.environ.get("ENGRAM_ROBOT_URL")
+    if robot_url:
+        from .robot.masterpi import MasterPiRobot
+
+        engine.set_robot(MasterPiRobot(robot_url, engine.memory))
     engine.load_arena(arena)
-    engine.overhead_scan()
+    if not robot_url:
+        engine.overhead_scan()  # the fake robot doubles as a fake camera
     return engine
 
 

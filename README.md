@@ -92,6 +92,7 @@ request -> memory bundle (sources, objects, rules, past lessons)
 | ENGRAM_ARENA | fixtures/lab/arena.json | Zones and tagged objects |
 | ENGRAM_MODELS | none | Folder of model files to fingerprint |
 | ENGRAM_UI | none | Built Lovable page to serve at / |
+| ENGRAM_ROBOT_URL | none | Robot agent on the MasterPi; unset means the fake robot |
 
 ## What is real and what is not yet
 
@@ -101,7 +102,10 @@ journal, skills, future tasks, the fake robot, the HTTP API, and the demo script
 Also working: the tag sheet and the overhead tag reader (tested on generated
 images, not yet on the real webcam).
 
-Not built yet: the MasterPi adapter (`engram/robot/masterpi.py`), voice in and out, the llama.cpp model on the Jetson, and the iPad page.
+Also written: the robot agent for the MasterPi (`robot_agent/`) and the Mac side
+adapter. Tested with a fake driver; the Hiwonder calls are not checked on the robot yet.
+
+Not built yet: measured routes on the real table, voice in and out, the llama.cpp model on the Jetson, and the iPad page.
 
 ## Team
 
