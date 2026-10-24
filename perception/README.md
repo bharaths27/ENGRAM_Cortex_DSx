@@ -54,13 +54,37 @@ the arena file so it hears "Sample B" rather than "sample be".
 To use whisper.cpp instead: `brew install whisper-cpp`, download a ggml model, then
 `python -m perception.voice --engine whisper-cpp --model models/ggml-base.en.bin`.
 
+
+## Gestures (optional)
+
+Watch hands with the same overhead camera:
+
+```bash
+python -m perception.overhead_tags run --gestures
+```
+
+- **Open palm, held about a quarter second:** sends STOP to the server. Fires once per palm.
+  The robot stays stopped until someone clears it on the iPad, like the stop button.
+  Use `--no-palm-stop` to only show palms while testing (people reaching over the table with open hands
+  could otherwise stop the robot more often than you want).
+- **Pointing at a tagged object:** the program draws a line along your index finger and picks the tag
+  closest to that line (or the one you are touching). It then reports that object's position right away,
+  so memory has a fresh sighting and the robot does not need to search, and remembers the choice for
+  8 seconds.
+- **Then say "bring me that one":** `voice.py` replaces "that one", "this" or "it" with the object you
+  pointed at, shows you the change, and sends "bring me the Beaker". Turn this off with `--no-pointing`.
+
+Gestures never plan or move the robot. Stop is the only command they can send, and it is the one that is
+always safe. The first `--gestures` run downloads MediaPipe's hand model (about 8 MB) to
+`perception/models/` (ignored by git). Adapted from the hand-tracking ideas in the class studio notebook.
+
 ## Tests
 
-`python -m pytest tests/test_perception.py` checks tag detection, zone lookup, the flicker filter and
-reply handling. Skipped when OpenCV is not installed.
+`python -m pytest tests/test_perception.py tests/test_gestures.py` checks tag detection, zone lookup, the
+flicker filter, reply handling, gesture shapes, pointing and the "that one" fill-in.
 
 ## Not done yet
 
-- Not yet tested with the real C920s camera or a real microphone.
+- Not yet tested with the real C920s camera, a real microphone, or real hands (gesture thresholds may need tuning).
 - Zones are rectangles in the camera image; fine for a flat table seen from above.
 - Replies use the system voice (`say` on Mac, `espeak` on Linux). Piper can replace `say()` in `voice.py`.

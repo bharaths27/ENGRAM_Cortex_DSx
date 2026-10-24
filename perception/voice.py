@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -169,6 +170,37 @@ class Transcriber:
             return " ".join(line.strip() for line in out.stdout.splitlines() if line.strip())
 
 
+_DEICTIC = [
+    re.compile(r"\b(that|this) (one|thing|object|sample|item)\b", re.IGNORECASE),
+    re.compile(r"\b(that|this)\b", re.IGNORECASE),
+    re.compile(r"\bit\b", re.IGNORECASE),
+]
+
+
+def object_names() -> list[str]:
+    try:
+        return [o["name"] for o in json.loads(ARENA.read_text())["objects"]]
+    except (OSError, KeyError, ValueError):
+        return []
+
+
+def fill_pointing(text: str, pointing: dict | None, names: list[str] | None = None) -> str:
+    """Turn "bring me that one" into "bring me the Beaker" when someone just pointed at the beaker.
+
+    Left alone when nobody pointed recently, when the sentence already names an object,
+    or when it is a "remember ..." note (there "that" is just grammar).
+    """
+    if not pointing or text.strip().lower().startswith("remember"):
+        return text
+    low = text.lower()
+    if any(n.lower() in low for n in (names if names is not None else object_names())):
+        return text
+    for pattern in _DEICTIC:
+        if pattern.search(text):
+            return pattern.sub(f"the {pointing['name']}", text, count=1)
+    return text
+
+
 def say(text: str) -> None:
     """Speak with the system voice (macOS 'say', or 'espeak' on Linux/Jetson). Piper can replace this later."""
     for cmd in (["say", text], ["espeak", text]):
@@ -190,6 +222,8 @@ def main():
     ap.add_argument("--speak", action="store_true", help="say replies out loud")
     ap.add_argument("--confirm", action="store_true", help="ask before sending what was heard")
     ap.add_argument("--max-seconds", type=float, default=15.0)
+    ap.add_argument("--no-pointing", action="store_true", help="don't fill in 'that one' from pointing")
+    ap.add_argument("--pointing-age", type=float, default=8.0, help="seconds a pointing gesture stays valid")
     args = ap.parse_args()
 
     try:
@@ -217,6 +251,12 @@ def main():
             if not text:
                 print("  (nothing heard)\n")
                 continue
+            if not args.no_pointing:
+                from .gestures import recent_pointing
+                filled = fill_pointing(text, recent_pointing(args.pointing_age))
+                if filled != text:
+                    print(f"  pointing: \"{text}\" -> \"{filled}\"")
+                    text = filled
             if args.confirm and input("  send this? [Y/n] ").strip().lower().startswith("n"):
                 print("  not sent\n")
                 continue

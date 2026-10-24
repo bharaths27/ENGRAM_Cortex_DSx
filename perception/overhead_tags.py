@@ -137,6 +137,85 @@ def report(server: str, tag_id: int, zone: str) -> str | None:
         return json.loads(resp.read()).get("object_id")
 
 
+def post_stop(server: str) -> dict:
+    req = urllib.request.Request(server + "/stop", data=b"", method="POST")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read())
+
+
+class GestureLayer:
+    """Open palm -> stop. Pointing -> which object, shared with the voice client.
+
+    Runs on the same frames as the tag reader, so it knows exactly where every tag is.
+    """
+
+    def __init__(self, server: str, arena: dict, palm_frames: int, point_frames: int, palm_stop: bool):
+        from .gestures import HandTracker, HoldFilter
+
+        self.server, self.palm_stop = server, palm_stop
+        self.tracker = HandTracker()
+        self.palm = HoldFilter(palm_frames)
+        self.point = HoldFilter(point_frames)
+        self.by_tag = {o["tag"]: o for o in arena["objects"]}
+        self.hands = []
+        self.ray = None
+        self.target = None
+
+    def update(self, frame, dets, zones) -> None:
+        from .gestures import hand_size, object_pointed_at, pointing_ray, save_pointing
+
+        self.hands = self.tracker.hands(frame)
+        # 1. Open palm held -> stop. Fires once each time a palm is newly held up.
+        palm_up = any(h.label == "open_palm" for h in self.hands)
+        held, changed = self.palm.update(palm_up)
+        if changed and held:
+            if self.palm_stop:
+                try:
+                    post_stop(self.server)
+                    print(f"  {time.strftime('%H:%M:%S')}  OPEN PALM -> STOP sent")
+                except (urllib.error.URLError, OSError) as e:
+                    print(f"  open palm seen but could not reach the server to stop: {e}")
+            else:
+                print(f"  {time.strftime('%H:%M:%S')}  open palm seen (stop disabled)")
+
+        # 2. Pointing -> which tagged object is on the pointing line.
+        centers = {tag_id: c for tag_id, c, _ in dets}
+        self.ray, target = None, None
+        for h in self.hands:
+            if h.label == "pointing":
+                tip, direction = pointing_ray(h.landmarks)
+                self.ray = (tip, direction)
+                target = object_pointed_at(tip, direction, centers, touch_radius=0.6 * hand_size(h.landmarks))
+                break
+        self.target, changed = self.point.update(target)
+        if changed and self.target is not None:
+            obj = self.by_tag.get(self.target)
+            zone = zone_for(centers[self.target], zones) if self.target in centers else None
+            if obj:
+                save_pointing(obj["id"], obj["name"], self.target, zone)
+                note = f" at {zone}" if zone else ""
+                print(f"  {time.strftime('%H:%M:%S')}  POINTING -> {obj['name']}{note}")
+                if zone:  # a fresh sighting, so the robot does not have to search for it
+                    try:
+                        report(self.server, self.target, zone)
+                    except (urllib.error.URLError, OSError):
+                        pass
+
+    def draw(self, frame, dets) -> None:
+        for h in self.hands:
+            color = {"open_palm": (60, 60, 230), "pointing": (0, 200, 255)}.get(h.label, (180, 180, 180))
+            for x, y in h.landmarks:
+                cv2.circle(frame, (int(x), int(y)), 3, color, -1)
+            cv2.putText(frame, h.label, (int(h.landmarks[0][0]), int(h.landmarks[0][1]) + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        if self.ray:
+            (x, y), (dx, dy) = self.ray
+            cv2.line(frame, (int(x), int(y)), (int(x + dx * 2000), int(y + dy * 2000)), (0, 200, 255), 2)
+        for tag_id, (cx, cy), _ in dets:
+            if tag_id == self.target:
+                cv2.circle(frame, (int(cx), int(cy)), 45, (0, 200, 255), 3)
+
+
 def draw(frame, zones, detections, names):
     for name, (x1, y1, x2, y2) in zones.items():
         cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (200, 160, 0), 2)
@@ -192,11 +271,16 @@ def cmd_image(args):
 
 def cmd_run(args):
     zones = load_zones()
-    names = {o["tag"]: o["name"] for o in load_arena()["objects"]}
+    arena = load_arena()
+    names = {o["tag"]: o["name"] for o in arena["objects"]}
     detector = make_detector()
     tracker = Tracker(stable_frames=args.stable_frames, refresh_s=args.refresh)
+    gestures = (GestureLayer(args.server, arena, args.palm_frames, args.point_frames, not args.no_palm_stop)
+                if args.gestures else None)
     cap = open_camera(args.camera, args.width, args.height)
     print(f"Watching camera {args.camera}. Reporting to {args.server}. Press q in the window (or Ctrl+C) to stop.")
+    if gestures:
+        print("Gestures on: hold an open palm to STOP; point at an object to select it.")
     try:
         while True:
             ok, frame = cap.read()
@@ -217,8 +301,13 @@ def cmd_run(args):
                 except (urllib.error.URLError, OSError) as e:
                     print(f"  could not reach the server ({e}); will retry")
                     tracker._reported.pop(tag_id, None)
+            if gestures:
+                gestures.update(frame, dets, zones)
             if not args.no_window:
-                cv2.imshow("ENGRAM overhead camera", draw(frame, zones, dets, names))
+                shown = draw(frame, zones, dets, names)
+                if gestures:
+                    gestures.draw(shown, dets)
+                cv2.imshow("ENGRAM overhead camera", shown)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
     except KeyboardInterrupt:
@@ -246,6 +335,10 @@ def main():
     run.add_argument("--stable-frames", type=int, default=5, help="frames a tag must stay put before reporting")
     run.add_argument("--refresh", type=float, default=60.0, help="seconds between repeat reports of a tag that stays put")
     run.add_argument("--no-window", action="store_true", help="no preview window (for the Jetson without a screen)")
+    run.add_argument("--gestures", action="store_true", help="also watch hands: open palm = stop, pointing = select object")
+    run.add_argument("--no-palm-stop", action="store_true", help="with --gestures, only show the palm, don't send stop")
+    run.add_argument("--palm-frames", type=int, default=8, help="frames an open palm must be held before stopping")
+    run.add_argument("--point-frames", type=int, default=6, help="frames the finger must stay on one object")
     run.set_defaults(func=cmd_run)
 
     args = ap.parse_args()

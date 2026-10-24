@@ -3,3 +3,4 @@ opencv-python>=4.8      # overhead tag reader (includes ArUco)
 numpy
 sounddevice             # microphone
 faster-whisper          # speech to text, runs locally; model downloads once
+mediapipe               # hand gestures (optional, only for --gestures); needs Python 3.9-3.12
