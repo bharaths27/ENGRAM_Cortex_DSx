@@ -117,6 +117,13 @@ class RulePlanner:
                           source="rules", targets=targets, zone=zone)
 
 
+def extract_json(text: str) -> dict | None:
+    """The JSON object in a model reply. Qwen3 may think first; drop <think> blocks before parsing."""
+    text = re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.S)
+    m = re.search(r"\{.*\}", text, re.S)
+    return json.loads(m.group(0)) if m else None
+
+
 class LlamaCppPlanner:
     """Ask a local llama.cpp server for the plan. Falls back to rules on any problem."""
 
@@ -135,7 +142,7 @@ class LlamaCppPlanner:
             f"Allowed actions: {json.dumps(describe_all())}\n"
             f"Zones: {sorted(self.zones)}\n"
             f"Memory: {json.dumps(bundle.to_dict())}\n"
-            f"Request: {request}\nJSON:"
+            f"Request: {request} /no_think\nJSON:"
         )
 
     def plan(self, request: str, bundle: MemoryBundle, memory: Memory) -> PlanResult:
@@ -148,8 +155,7 @@ class LlamaCppPlanner:
             req = urllib.request.Request(self.url, body, {"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
                 text = json.loads(r.read())["content"]
-            m = re.search(r"\{.*\}", text, re.S)
-            plan = json.loads(m.group(0)) if m else None
+            plan = extract_json(text)
         except Exception:
             plan = None
         ms = (time.perf_counter() - t0) * 1000

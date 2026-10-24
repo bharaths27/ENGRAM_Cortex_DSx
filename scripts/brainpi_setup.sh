@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Set up the brain Pi (Pi 4B) with no internet. Run ON the Pi 4B:
+# Set up the brain on the Pi. Run ON the Pi:
 #     bash ~/engram_hub/scripts/brainpi_setup.sh
-# Expects ~/engram_hub (the repo) and ~/offline (wheels, models, llama.cpp source),
-# both copied over from the Mac. Safe to run again; it skips finished parts.
+# Expects ~/engram_hub (the repo) and ~/offline (models, llama.cpp source, and wheels when there
+# is no internet). Uses ~/offline/wheels if present, otherwise installs from the internet.
+# Safe to run again; it skips finished parts.
 set -euo pipefail
 
 HUB=~/engram_hub
 OFF=~/offline
 cd "$HUB"
 
-echo "== 1. Python packages (from ~/offline/wheels, no internet)"
+echo "== 1. Python packages"
 [ -d .venv ] || python3 -m venv .venv
-.venv/bin/pip install -q --no-index --find-links "$OFF/wheels" -r requirements.txt
-.venv/bin/pip install -q --no-index --find-links "$OFF/wheels" -r perception/requirements.txt || echo "voice packages skipped"
-.venv/bin/pip install -q --no-index --find-links "$OFF/wheels" cmake ninja
+PIP=(.venv/bin/pip install -q)
+[ -d "$OFF/wheels" ] && PIP+=(--no-index --find-links "$OFF/wheels")
+"${PIP[@]}" -r requirements.txt
+"${PIP[@]}" -r perception/requirements.txt || echo "voice packages skipped"
+"${PIP[@]}" cmake ninja
 
 echo "== 2. Build llama-server (about 15 to 25 minutes on a Pi 4)"
 if ! command -v g++ >/dev/null; then

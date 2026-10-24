@@ -122,3 +122,10 @@ def test_read_secret(tmp_path):
     raw = tmp_path / "key"
     raw.write_text("xyz\n")
     assert read_secret(raw) == "xyz"
+
+
+def test_planner_ignores_qwen3_thinking():
+    from engram.planner import extract_json
+
+    assert extract_json('<think>maybe {"goal": "x"} no</think>\n{"goal": "bring", "steps": []}') == {"goal": "bring", "steps": []}
+    assert extract_json("<think>never closed {\"a\": 1}") is None
