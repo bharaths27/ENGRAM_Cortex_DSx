@@ -13,7 +13,10 @@ from typing import Any
 from .db import now
 from .ids import new_id
 
-_WHEN = re.compile(r"^\s*when\s+(?P<trigger>.+?),\s*(?:then\s+)?(?P<request>.+)$", re.IGNORECASE)
+# "When X, do Y" and the same shape with once / after / as soon as / whenever (EC15 t03.x).
+_WHEN = re.compile(
+    r"^\s*(?:when|whenever|once|after|as soon as)\s+(?P<trigger>.+?),\s*(?:then\s+)?(?P<request>.+)$", re.IGNORECASE
+)
 
 
 def normalize(text: str) -> str:
