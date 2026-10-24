@@ -143,19 +143,29 @@ def post_stop(server: str) -> dict:
         return json.loads(resp.read())
 
 
+def post_rest(server: str, zone: str) -> dict:
+    req = urllib.request.Request(server + "/plan/rest", data=json.dumps({"zone": zone}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read())
+
+
 class GestureLayer:
-    """Open palm -> stop. Pointing -> which object, shared with the voice client.
+    """Open palm -> stop. Pointing -> which object. Thumb out -> propose return to rest.
 
     Runs on the same frames as the tag reader, so it knows exactly where every tag is.
     """
 
-    def __init__(self, server: str, arena: dict, palm_frames: int, point_frames: int, palm_stop: bool):
+    def __init__(self, server: str, arena: dict, palm_frames: int, point_frames: int, palm_stop: bool,
+                 thumb_frames: int = 10, thumb_rest: bool = True):
         from .gestures import HandTracker, HoldFilter
 
-        self.server, self.palm_stop = server, palm_stop
+        self.server, self.palm_stop, self.thumb_rest = server, palm_stop, thumb_rest
+        self.rest_zone = arena.get("start_zone", "home")
         self.tracker = HandTracker()
         self.palm = HoldFilter(palm_frames)
         self.point = HoldFilter(point_frames)
+        self.thumb = HoldFilter(thumb_frames)
         self.by_tag = {o["tag"]: o for o in arena["objects"]}
         self.hands = []
         self.ray = None
@@ -177,6 +187,21 @@ class GestureLayer:
                     print(f"  open palm seen but could not reach the server to stop: {e}")
             else:
                 print(f"  {time.strftime('%H:%M:%S')}  open palm seen (stop disabled)")
+
+        # 1b. Thumb out held -> propose "return to rest". It only runs after approval.
+        thumb_out = not palm_up and any(h.label == "thumb" for h in self.hands)
+        held, changed = self.thumb.update(thumb_out)
+        if changed and held:
+            if self.thumb_rest:
+                try:
+                    r = post_rest(self.server, self.rest_zone)
+                    state = "waiting for approval" if r.get("status") == "proposed" else "rejected by the checker"
+                    print(f"  {time.strftime('%H:%M:%S')}  THUMB -> return to {self.rest_zone} proposed, "
+                          f"{state} (operation {r.get('operation_id')})")
+                except (urllib.error.URLError, OSError) as e:
+                    print(f"  thumb seen but could not reach the server: {e}")
+            else:
+                print(f"  {time.strftime('%H:%M:%S')}  thumb seen (return to rest disabled)")
 
         # 2. Pointing -> which tagged object is on the pointing line.
         centers = {tag_id: c for tag_id, c, _ in dets}
@@ -203,7 +228,8 @@ class GestureLayer:
 
     def draw(self, frame, dets) -> None:
         for h in self.hands:
-            color = {"open_palm": (60, 60, 230), "pointing": (0, 200, 255)}.get(h.label, (180, 180, 180))
+            color = {"open_palm": (60, 60, 230), "pointing": (0, 200, 255),
+                     "thumb": (200, 120, 255)}.get(h.label, (180, 180, 180))
             for x, y in h.landmarks:
                 cv2.circle(frame, (int(x), int(y)), 3, color, -1)
             cv2.putText(frame, h.label, (int(h.landmarks[0][0]), int(h.landmarks[0][1]) + 20),
@@ -275,12 +301,14 @@ def cmd_run(args):
     names = {o["tag"]: o["name"] for o in arena["objects"]}
     detector = make_detector()
     tracker = Tracker(stable_frames=args.stable_frames, refresh_s=args.refresh)
-    gestures = (GestureLayer(args.server, arena, args.palm_frames, args.point_frames, not args.no_palm_stop)
+    gestures = (GestureLayer(args.server, arena, args.palm_frames, args.point_frames, not args.no_palm_stop,
+                             args.thumb_frames, not args.no_thumb_rest)
                 if args.gestures else None)
     cap = open_camera(args.camera, args.width, args.height)
     print(f"Watching camera {args.camera}. Reporting to {args.server}. Press q in the window (or Ctrl+C) to stop.")
     if gestures:
-        print("Gestures on: hold an open palm to STOP; point at an object to select it.")
+        print("Gestures on: open palm = STOP; point = select an object; "
+              "thumb out = propose return to rest (needs approval).")
     try:
         while True:
             ok, frame = cap.read()
@@ -339,6 +367,8 @@ def main():
     run.add_argument("--no-palm-stop", action="store_true", help="with --gestures, only show the palm, don't send stop")
     run.add_argument("--palm-frames", type=int, default=8, help="frames an open palm must be held before stopping")
     run.add_argument("--point-frames", type=int, default=6, help="frames the finger must stay on one object")
+    run.add_argument("--thumb-frames", type=int, default=10, help="frames a thumb-out fist must be held")
+    run.add_argument("--no-thumb-rest", action="store_true", help="with --gestures, only show the thumb, don't propose")
     run.set_defaults(func=cmd_run)
 
     args = ap.parse_args()

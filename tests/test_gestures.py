@@ -66,3 +66,12 @@ def test_pointing_note_expires(tmp_path):
     save_pointing("beaker", "Beaker", 4, "shelf_B", path)
     assert recent_pointing(8, path)["object_id"] == "beaker"
     assert recent_pointing(-1, path) is None
+
+
+THUMB = hand({8: (115, 220), 12: (100, 215), 16: (85, 225), 20: (70, 235), 4: (190, 240)})
+
+
+def test_thumb_out_fist():
+    assert classify(THUMB) == "thumb"
+    assert classify(FIST) == "other"          # thumb tucked in is just a fist
+    assert classify(FIST, "Thumb_Down", 0.8) == "thumb"

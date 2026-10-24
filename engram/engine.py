@@ -133,6 +133,31 @@ class Engine:
             "planner_calls": res.planner_calls, "planning_ms": round(res.planning_ms, 3),
         }
 
+    def propose_fixed(self, goal: str, steps: list[dict[str, Any]], source: str) -> dict[str, Any]:
+        """Propose a ready-made plan (for example "return to rest" from a gesture).
+
+        No planner is involved, but everything else is the same as propose(): the checker
+        must accept it, it gets a digest, and a person must approve that digest before it runs.
+        """
+        episode_id = new_id("ep")
+        plan = {"goal": goal, "steps": steps, "evidence": [], "rules_used": []}
+        res = PlanResult(plan, planner_calls=0, source=source)
+        check = check_plan(plan, self.memory, self.zones)
+        plan_digest = digest(plan)
+        status = "proposed" if check.ok else "rejected"
+        meta = {"targets": [], "zone": None, "source": source, "digest": plan_digest, "check": check.to_dict()}
+        self._episode(episode_id, goal, plan, meta, status, None if check.ok else "; ".join(check.errors), res)
+        return {"operation_id": episode_id, "status": status, "plan": plan, "digest": plan_digest,
+                "check": check.to_dict(), "source": source, "planner_calls": 0, "planning_ms": 0.0}
+
+    def propose_rest(self, zone: str = "home") -> dict[str, Any]:
+        """Return to the resting position: drive to the start zone. Needs approval like any plan.
+
+        When the robot adapter gets an arm rest pose, add it to capabilities.py and to these steps.
+        """
+        return self.propose_fixed(f"return to rest at {zone}", [{"op": "go_to_zone", "args": {"zone": zone}}],
+                                  source="gesture")
+
     def _episode(self, episode_id: str, request: str, plan: dict[str, Any] | None, meta: dict[str, Any],
                  outcome: str, failure: str | None, res: PlanResult, skill_id: str | None = None) -> None:
         self.conn.execute(

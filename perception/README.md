@@ -71,11 +71,17 @@ python -m perception.overhead_tags run --gestures
   closest to that line (or the one you are touching). It then reports that object's position right away,
   so memory has a fresh sighting and the robot does not need to search, and remembers the choice for
   8 seconds.
+- **Thumb out (a fist with the thumb sticking out, any direction), held about a third of a second:**
+  proposes "return to rest", which drives the robot back to its start zone (`home`). Like every plan, it
+  only runs after someone approves it on the iPad. Use `--no-thumb-rest` to only show it while testing.
+  This uses a new server endpoint, `POST /plan/rest` (in `engram/api.py` and `engram/engine.py`).
+  The robot has no arm rest pose (x, y, z) yet; when Brian's adapter adds one, put it in
+  `engram/capabilities.py` and add it to `Engine.propose_rest`.
 - **Then say "bring me that one":** `voice.py` replaces "that one", "this" or "it" with the object you
   pointed at, shows you the change, and sends "bring me the Beaker". Turn this off with `--no-pointing`.
 
-Gestures never plan or move the robot. Stop is the only command they can send, and it is the one that is
-always safe. The first `--gestures` run downloads MediaPipe's hand model (about 8 MB) to
+Gestures never move the robot on their own. Stop is the only command they send directly, because it is
+always safe; return to rest is only proposed. The first `--gestures` run downloads MediaPipe's hand model (about 8 MB) to
 `perception/models/` (ignored by git). Adapted from the hand-tracking ideas in the class studio notebook.
 
 ## Tests

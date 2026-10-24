@@ -3,12 +3,14 @@
 Adapted from the hand-tracking ideas in the class studio notebook (MediaPipe hand
 landmarks, pointing angle, a hold-for-N-frames filter), rewritten in Python for the robot.
 
-Two gestures, and neither one plans or moves the robot:
+Three gestures. None of them moves the robot by itself:
 
     open palm, held  -> asks the server to STOP (the one command that is always safe)
     pointing         -> works out which tagged object the finger points at, so
                         "bring me that one" can name it, and the robot gets a
                         fresh sighting of that object right away
+    thumb out, held  -> PROPOSES "return to rest" (drive to home). Like every plan,
+                        it only runs after a person approves it
 
 Used by `python -m perception.overhead_tags run --gestures` (same camera, same frame).
 The functions below are plain math on hand landmarks so they can be tested without a camera.
@@ -65,14 +67,28 @@ def is_pointing(lm: list[Point]) -> bool:
     return index_out and others_in
 
 
+def is_thumb_out(lm: list[Point]) -> bool:
+    """A fist with the thumb sticking out (a thumbs-up turned in any direction).
+
+    Seen from the overhead camera the thumb points along the table, so any direction counts.
+    """
+    fingers_in = all(finger_reach(lm, t) < 1.3 for t in (8, 12, 16, 20))
+    thumb_out = _dist(lm[4], lm[9]) / hand_size(lm) > 0.9
+    return fingers_in and thumb_out
+
+
 def classify(lm: list[Point], builtin: str = "", builtin_score: float = 0.0) -> str:
-    """'open_palm', 'pointing', or 'other'. MediaPipe's own label is used when it is confident."""
+    """'open_palm', 'pointing', 'thumb', or 'other'. MediaPipe's own label is used when it is confident."""
     if builtin == "Open_Palm" and builtin_score >= 0.6:
         return "open_palm"
     if builtin == "Pointing_Up" and builtin_score >= 0.6:
         return "pointing"
+    if builtin in ("Thumb_Up", "Thumb_Down") and builtin_score >= 0.6:
+        return "thumb"
     if is_pointing(lm):
         return "pointing"
+    if is_thumb_out(lm):
+        return "thumb"
     if is_open_palm(lm):
         return "open_palm"
     return "other"
