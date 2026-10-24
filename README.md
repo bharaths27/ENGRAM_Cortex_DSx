@@ -73,6 +73,8 @@ request -> memory bundle (sources, objects, rules, past lessons)
 | GET | /memory/objects | Where each tagged object was last seen |
 | POST | /commands | Typed or spoken command: "remember ...", "when X, Y", or a task |
 | POST | /plan | Plan only |
+| POST | /plan/rest | Propose "return to rest" (drive home); needs approval |
+| GET | /operations/pending | Plans waiting for approval, including ones from gestures and fired triggers |
 | POST | /operations/{id}/approve | Approve the exact plan digest and run it |
 | POST | /stop | Stop now |
 | GET | /robot/state | Robot state |
