@@ -27,7 +27,7 @@ LO, HI = 500, 2500
 
 def main() -> int:
     cfg = json.loads(CONFIG.read_text())
-    sys.path.insert(0, str(Path.home() / "engram_robot"))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "engram_robot"))  # not Path.home(): sudo makes it /root
     from drivers.hiwonder_board import HiwonderBoard
 
     board = HiwonderBoard()

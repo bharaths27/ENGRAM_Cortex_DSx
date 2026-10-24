@@ -58,7 +58,8 @@ class FakeDriver(Driver):
 
 class HiwonderDriver(Driver):
     # Skid steer: the board takes a duty cycle, not a speed, so moves are timed.
-    ENGRAM_DIR = Path.home() / "engram_robot"
+    # robot_agent/ sits next to engram_robot/ in the home folder. Not Path.home(): under sudo that is /root.
+    ENGRAM_DIR = Path(__file__).resolve().parent.parent / "engram_robot"
     DRIVE_DUTY = 0.4           # same duty spin.py used; keep low until measured
     TURN_DUTY = 0.4
     M_PER_S_AT_DUTY = None     # CHECK: tape measure at DRIVE_DUTY. None = estimate from drive_calib.json
