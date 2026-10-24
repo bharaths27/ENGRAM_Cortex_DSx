@@ -223,6 +223,25 @@ class Engine:
     def test_skill(self, skill_id: str) -> dict[str, Any]:
         return self.skills.test(skill_id, lambda p: check_plan(p, self.memory, self.zones)).to_dict()
 
+    def pending(self, max_age_s: float = 300.0) -> list[dict[str, Any]]:
+        """Plans waiting for a person's approval, newest first.
+
+        Lets the iPad show plans it did not ask for itself: a gesture's "return to rest",
+        or a future task whose trigger fired. Only recent ones, so old unapproved
+        proposals (for example from a test run) do not pile up on screen.
+        """
+        rows = self.conn.execute(
+            "SELECT id, request, plan_json, evidence_json, started_at FROM episode "
+            "WHERE outcome = 'proposed' AND started_at >= ? ORDER BY started_at DESC",
+            (now() - max_age_s,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            meta = json.loads(r["evidence_json"] or "{}")
+            out.append({"operation_id": r["id"], "request": r["request"], "plan": json.loads(r["plan_json"]),
+                        "digest": meta.get("digest"), "source": meta.get("source"), "proposed_at": r["started_at"]})
+        return out
+
     def events(self, limit: int = 200) -> list[dict[str, Any]]:
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM operation_event ORDER BY seq DESC LIMIT ?", (limit,))]

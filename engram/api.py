@@ -148,6 +148,11 @@ def create_app(engine: Engine | None = None) -> FastAPI:
         """Propose "return to the resting position". Still needs approval before it runs."""
         return engine.propose_rest(body.zone)
 
+    @app.get("/operations/pending")
+    def operations_pending() -> list[dict[str, Any]]:
+        """Plans waiting for approval that the iPad did not ask for (gestures, fired triggers)."""
+        return engine.pending()
+
     @app.post("/operations/{operation_id}/approve")
     def approve(operation_id: str, body: ApproveIn) -> dict[str, Any]:
         try:
