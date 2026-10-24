@@ -52,7 +52,7 @@ def test_cases_are_well_formed():
     assert len({c["case_id"] for c in cases}) == len(cases)
     families = {c["family"] for c in cases if c.get("kind") != "verifier_check"}
     assert families >= {"source_revision", "paraphrase", "negation_disposal", "future_instruction",
-                        "repeated_trigger", "irrelevant_source", "stale_scene"}
+                        "repeated_trigger", "irrelevant_source", "stale_scene", "recall_not_commitment"}
     for c in cases:
         assert c["origin"] and c["expected"]
 

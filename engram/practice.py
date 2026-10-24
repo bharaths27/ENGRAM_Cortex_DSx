@@ -9,6 +9,7 @@ candidate skill, never prove a real pickup or grant motion permission.
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -86,9 +87,10 @@ def _looks_before_pick(steps: list[dict[str, Any]]) -> list[str]:
 def verify(expected: dict[str, Any], actual: dict[str, Any]) -> tuple[str, list[str]]:
     """PASS, FAIL or ABSTAIN with reasons. ABSTAIN = a safe ask/refusal where acting was
     expected and the case allows it. "Always refuse" never passes an act case."""
-    if "proposals" in expected:
-        n = actual.get("proposals")
-        return ("PASS", []) if n == expected["proposals"] else ("FAIL", [f"{n} proposals, expected {expected['proposals']}"])
+    counts = [f"{actual.get(k)} {k.replace('_', ' ')}, expected {expected[k]}"
+              for k in ("proposals", "new_tasks", "waiting") if k in expected and actual.get(k) != expected[k]]
+    if "behavior" not in expected:
+        return ("FAIL", counts) if counts else ("PASS", [])
     beh = actual.get("behavior")
     allowed = expected.get("behavior")
     allowed = [allowed] if isinstance(allowed, str) else list(allowed or [])
@@ -98,7 +100,7 @@ def verify(expected: dict[str, Any], actual: dict[str, Any]) -> tuple[str, list[
         if beh in expected.get("abstain_ok", []):
             return "ABSTAIN", [f"safe '{beh}' instead of {allowed}"]
         return "FAIL", [f"behavior '{beh}', expected {allowed}"]
-    reasons = []
+    reasons = counts
     got = actual.get("placements", [])
     for want in expected.get("place", []):
         if want not in got:
@@ -118,10 +120,10 @@ def verify(expected: dict[str, Any], actual: dict[str, Any]) -> tuple[str, list[
 
 # ---- running a case on the mock robot -------------------------------------
 
-def mock_engine() -> Engine:
+def mock_engine(db: str | Path = ":memory:") -> Engine:
     arena = json.loads((ROOT / "fixtures/lab/arena.json").read_text())
     robot = MockRobot(arena)
-    engine = Engine(connect(":memory:"), robot, set(arena["zones"]))
+    engine = Engine(connect(db), robot, set(arena["zones"]))
     if not isinstance(engine.robot, MockRobot):  # never practice on hardware
         raise RuntimeError("practice runs only on the MOCK robot")
     engine.load_arena(arena)
@@ -129,13 +131,31 @@ def mock_engine() -> Engine:
     return engine
 
 
+def _tasks(engine: Engine, status: str | None = None) -> int:
+    sql, args = "SELECT COUNT(*) FROM prospective_task", ()
+    if status:
+        sql, args = sql + " WHERE status = ?", (status,)
+    return engine.conn.execute(sql, args).fetchone()[0]
+
+
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
-    """Run one case's steps on a fresh database and MOCK robot; return the verified record."""
-    engine = mock_engine()
+    """Run one case's steps on a fresh, disposable database and the MOCK robot."""
+    with tempfile.TemporaryDirectory() as tmp:
+        return _run(case, Path(tmp) / "practice.db")
+
+
+def _run(case: dict[str, Any], db: Path) -> dict[str, Any]:
+    engine = mock_engine(db)
     titles: dict[str, str] = {}
     last: dict[str, Any] = {}
-    proposals = 0
+    proposals = new_tasks = 0
     for step in case["steps"]:
+        if "restart" in step:
+            # Reopen the same file in a new Engine (same Python process, not an OS restart).
+            engine.conn.close()
+            engine = mock_engine(db)
+            continue
+        before = _tasks(engine)
         if "teach_file" in step:
             text = (ROOT / step["teach_file"]).read_text()
             out = engine.teach(step["title"], text)
@@ -145,10 +165,12 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             titles[out["source_id"]] = step["title"]
         elif "say" in step:
             last = engine.command(step["say"], who="practice")
+            new_tasks = _tasks(engine) - before
         elif "fire" in step:
             proposals += len(engine.fire_trigger(step["fire"]))
         elif "cancel" in step:
             if not hasattr(engine.prospective, "cancel"):
+                engine.conn.close()
                 return _record(case, None, "BLOCKED", ["no cancel operation exists for scheduled tasks"])
             engine.prospective.cancel(step["cancel"])
         elif "make_stale" in step:
@@ -159,8 +181,8 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     rule_sources = [titles.get(facts[r]["source_id"], facts[r]["source_id"])
                     for r in (last.get("plan") or {}).get("rules_used", []) if r in facts]
     actual = summarize(last, rule_sources) if last else {}
-    if "proposals" in case["expected"]:
-        actual["proposals"] = proposals
+    actual.update(proposals=proposals, new_tasks=new_tasks, waiting=_tasks(engine, "waiting"))
+    engine.conn.close()
     verdict, reasons = verify(case["expected"], actual)
     return _record(case, actual, verdict, reasons)
 
