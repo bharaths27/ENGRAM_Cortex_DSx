@@ -63,3 +63,21 @@ def test_a_real_future_instruction_is_still_scheduled_alongside_the_question_gua
     out = taught.command("When the incubation timer goes off, take Sample B to the bench", "test")
     assert out["kind"] == "scheduled" and out["created"] is True
     assert len(taught.prospective.list()) == 1
+
+
+@pytest.mark.parametrize("text", [
+    "Do not move Sample B",
+    "Don't touch the goggles",
+    "Please never take Sample A to the bench",
+    "don’t bring the beaker to the bench",
+])
+def test_negated_requests_never_plan_a_move(taught, text):
+    out = taught.command(text, "test")
+    assert out["kind"] == "proposal" and out["status"] == "refused"
+    assert "will not move" in out["reason"]
+    assert taught.robot.calls == [("observe", {})]
+
+
+def test_negation_can_still_be_taught_as_a_rule(taught):
+    out = taught.command("Remember that you must never move Sample B without goggles", "test")
+    assert out["kind"] == "taught"

@@ -32,6 +32,8 @@ REFUSE_WORDS = (
 FUTURE_HINTS = re.compile(
     r"\b(when|whenever|once|after|as soon as|until|later|tomorrow|tonight|in \d+ (?:seconds?|minutes?|hours?))\b"
 )
+# "Do not move Sample B" is an instruction NOT to act. Without this it planned a move of Sample B.
+NEGATION = re.compile(r"\b(do not|don'?t|never|no need to)\b")
 DEFAULT_ZONE = "bench"
 log = logging.getLogger("engram.planner")
 
@@ -53,6 +55,10 @@ def refusal(request: str) -> str | None:
     for w in REFUSE_WORDS:
         if re.search(rf"\b{re.escape(w)}\b", low):
             return f"I will not do that: '{w}' is not something this robot is allowed to do."
+    neg = NEGATION.search(low.replace("\u2019", "'"))
+    if neg:
+        return (f"You said '{neg.group(1)}', so I will not move anything. "
+                "To make it a rule, say 'Remember that ...'.")
     hint = FUTURE_HINTS.search(low)
     if hint:
         return (f"That sounds like something to do later ('{hint.group(1)}'), so I will not move now. "
