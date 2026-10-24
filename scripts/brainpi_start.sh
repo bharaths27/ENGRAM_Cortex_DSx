@@ -2,7 +2,7 @@
 # Start the brain on the Pi 5, next to Brian's robot server. Run ON the Pi 5:
 #     bash ~/engram_hub/scripts/brainpi_start.sh          # rule planner (default, fast)
 #     bash ~/engram_hub/scripts/brainpi_start.sh --model  # also Qwen3 1.7B through llama.cpp
-# The hub listens on port 8000. By default it sends approved actions to Brian's engram_robot server
+# The hub listens on port 8001 (Verna's console has 8000). By default it sends approved actions to Brian's engram_robot server
 # on this same Pi (port 8200), signing each step with the secret in ~/engram_robot/robot.env.
 # For our own robot_agent instead: ENGRAM_ROBOT_API=masterpi ENGRAM_ROBOT_URL=http://localhost:8100
 # Ctrl+C stops everything.
@@ -21,6 +21,6 @@ if [ "${1:-}" = "--model" ]; then
 fi
 
 export ENGRAM_ROBOT_API=${ENGRAM_ROBOT_API:-brian}
-export ENGRAM_ROBOT_URL=${ENGRAM_ROBOT_URL:-http://localhost:8200}
+export ENGRAM_ROBOT_URL=${ENGRAM_ROBOT_URL:-http://[::1]:8200}   # Brian's server listens on IPv6 only
 export ENGRAM_ROBOT_KEY_FILE=${ENGRAM_ROBOT_KEY_FILE:-$HOME/engram_robot/robot.env}
-.venv/bin/uvicorn --factory engram.api:create_app --host 0.0.0.0 --port 8000
+.venv/bin/python scripts/serve_dual.py --port ${ENGRAM_PORT:-8001}   # 8000 is Verna's console; IPv6 and IPv4
