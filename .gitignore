@@ -8,4 +8,5 @@ __pycache__/
 *.db-shm
 models/
 .DS_Store
+offline/
 wheels/

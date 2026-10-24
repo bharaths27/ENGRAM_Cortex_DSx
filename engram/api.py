@@ -10,6 +10,9 @@ Environment:
     ENGRAM_UI      folder with the built Lovable page to serve at / (optional)
     ENGRAM_ROBOT_URL  robot agent on the MasterPi, e.g. http://192.168.1.50:8100.
                       Leave unset to use the fake robot.
+    ENGRAM_LLM_URL    llama.cpp server completion URL, e.g. http://127.0.0.1:8080/completion.
+                      Leave unset to use the rule planner. Any model problem falls back to rules.
+    ENGRAM_LLM_TIMEOUT  seconds to wait for the model (default 60; a Pi 4 is slow)
 """
 
 from __future__ import annotations
@@ -73,8 +76,14 @@ class TriggerIn(BaseModel):
 def default_engine() -> Engine:
     arena_path = Path(os.environ.get("ENGRAM_ARENA", ROOT / "fixtures/lab/arena.json"))
     arena = json.loads(arena_path.read_text())
+    planner = None
+    llm_url = os.environ.get("ENGRAM_LLM_URL")
+    if llm_url:
+        from .planner import LlamaCppPlanner
+
+        planner = LlamaCppPlanner(set(arena["zones"]), llm_url, float(os.environ.get("ENGRAM_LLM_TIMEOUT", "60")))
     engine = Engine(connect(os.environ.get("ENGRAM_DB", "engram.db")), MockRobot(arena), set(arena["zones"]),
-                    models_dir=os.environ.get("ENGRAM_MODELS"))
+                    planner=planner, models_dir=os.environ.get("ENGRAM_MODELS"))
     robot_url = os.environ.get("ENGRAM_ROBOT_URL")
     if robot_url:
         from .robot.masterpi import MasterPiRobot
