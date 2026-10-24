@@ -54,7 +54,7 @@ Everything runs on the robot's own Raspberry Pi 5. Nothing leaves the room.
 * Skills: after a good run, the run becomes a candidate skill. Once a person approves it, the same
   request runs again with no model call.
 
-Hardware: Hiwonder MasterPi (mecanum base, 5 servo arm with claw, ultrasonic sensor, camera)
+Hardware: Hiwonder MasterPi (four wheel base, 5 servo arm with claw, ultrasonic sensor, camera)
 on a Raspberry Pi 5.
 
 ### How did you use Kiro to build your project?
@@ -97,7 +97,7 @@ approves it before the robot moves.
 
 **Bharath (1:25)**
 Safety is built in. Every step is signed, any step we cannot verify stops the robot, and
-an open palm or the stop button halts it at once.
+the stop command halts it at once.
 Nothing leaves the room: no cloud, no account, no data sent anywhere.
 
 **All (1:45)**
