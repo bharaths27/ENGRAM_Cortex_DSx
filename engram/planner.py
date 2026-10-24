@@ -23,6 +23,13 @@ from .memory import Memory, MemoryBundle
 REFUSE_WORDS = (
     "delete", "erase", "wipe", "forget everything", "disable stop", "turn off stop",
     "throw", "pour", "hit", "break", "override",
+    # Disposal: the robot has no disposal capability, so these must refuse instead of planning a move (EC15 t08.2/t08.3).
+    "dump", "get rid of", "dispose", "discard", "trash", "garbage", "bin it",
+)
+# Future intent that did not parse as "When/Once/After/As soon as X, do Y" must never become an immediate move
+# (EC15 t03.x): it is refused with a hint to phrase it as a future task, which the engine schedules instead.
+FUTURE_HINTS = re.compile(
+    r"\b(when|whenever|once|after|as soon as|until|later|tomorrow|tonight|in \d+ (?:seconds?|minutes?|hours?))\b"
 )
 DEFAULT_ZONE = "bench"
 
@@ -43,6 +50,10 @@ def refusal(request: str) -> str | None:
     for w in REFUSE_WORDS:
         if re.search(rf"\b{re.escape(w)}\b", low):
             return f"I will not do that: '{w}' is not something this robot is allowed to do."
+    hint = FUTURE_HINTS.search(low)
+    if hint:
+        return (f"That sounds like something to do later ('{hint.group(1)}'), so I will not move now. "
+                "Say it as 'When <event>, <task>' and I will schedule it.")
     return None
 
 
