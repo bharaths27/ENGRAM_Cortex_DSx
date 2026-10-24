@@ -34,6 +34,9 @@ else
     echo "llama-server ready at ~/llama-server"
 fi
 
-echo "== 3. Tests"
+echo "== 3. Robot commands, poses and skills into memory (engram.db)"
+.venv/bin/python scripts/load_robot_memory.py
+
+echo "== 4. Tests"
 .venv/bin/python -m pytest -q -p no:warnings 2>&1 | tail -2
 echo "done"
