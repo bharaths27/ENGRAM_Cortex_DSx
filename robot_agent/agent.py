@@ -97,6 +97,11 @@ class RobotAgent:
             self.holding = None
         elif op == "gripper_close":
             self.driver.gripper(False)
+        elif op == "arm_pose":
+            # Testing only (scripts/robot_try.py). Not in the planner's allow list.
+            if args.get("pose") not in ("home", "reach_down", "carry"):
+                raise ValueError("pose must be home, reach_down or carry")
+            self.driver.arm(args["pose"])
         elif op in ("go_to_zone", "approach_tag"):
             self._go(args.get("zone") or object_zone or "")
         elif op == "pick_tagged_object":

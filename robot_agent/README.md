@@ -24,6 +24,22 @@ This folder is the robot side. It uses only the Python standard library.
    `ENGRAM_ROBOT_URL=http://<robot-ip>:8100 uvicorn --factory engram.api:create_app --host 0.0.0.0 --port 8000`
    and run `python scripts/overhead_camera.py` so placements can be confirmed.
 
+## Teach the arm, then pick things up (Oct 24)
+
+Servo ids from Brian: 1 claw, 3 wrist, 4 elbow, 5 shoulder, 6 base. They live in
+`arm_config.json`, together with the three arm poses the robot needs.
+
+1. Copy the folder to the robot: `scp -r robot_agent starrasp@star-pi.local:~/`
+   (this overwrites `arm_config.json` on the robot; copy it back first if poses were saved there).
+2. On the robot, with someone watching the arm: `cd ~ && sudo python3 -m robot_agent.teach_pose`
+   Move the joints with `s+`, `e-`, `w 1500` and so on, then `save home`, `save reach_down`
+   (claw down at table height in front of the robot), and `save carry` (object lifted clear).
+   Copy the result back to the Mac: `scp starrasp@star-pi.local:~/robot_agent/arm_config.json robot_agent/`
+3. On the robot, stop Brian's own server if it is running, then:
+   `cd ~ && sudo python3 -m robot_agent.agent`
+4. From the Mac, one action at a time:
+   `python scripts/robot_try.py pose home`, then `pick`, `forward 0.2`, `turn 90`, `place`, `stop`.
+
 ## Safety
 
 - Stop works at any time, even in the middle of a move, and the agent stops by

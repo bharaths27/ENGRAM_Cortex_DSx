@@ -1,0 +1,10 @@
+{
+  "note": "Servo ids from Brian (Oct 24): 1 claw, 3 wrist, 4 elbow, 5 shoulder, 6 base. Claw: 2500 fully open, 500 fully closed (Brian). If 500 strains on a real object, raise closed_us until it just grips. Fill poses with: sudo python3 -m robot_agent.teach_pose",
+  "claw": {"servo": 1, "open_us": 2500, "closed_us": 500},
+  "joints": {"wrist": 3, "elbow": 4, "shoulder": 5, "base": 6},
+  "poses": {
+    "home": {},
+    "reach_down": {},
+    "carry": {}
+  }
+}
