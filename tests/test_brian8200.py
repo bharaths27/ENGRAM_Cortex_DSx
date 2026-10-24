@@ -129,3 +129,11 @@ def test_planner_ignores_qwen3_thinking():
 
     assert extract_json('<think>maybe {"goal": "x"} no</think>\n{"goal": "bring", "steps": []}') == {"goal": "bring", "steps": []}
     assert extract_json("<think>never closed {\"a\": 1}") is None
+
+
+def test_model_failure_is_reported_as_fallback(engine):
+    from engram.planner import LlamaCppPlanner
+
+    engine.planner = LlamaCppPlanner(engine.zones, "http://127.0.0.1:9/completion", timeout_s=0.5)
+    out = engine.propose("bring the beaker to the bench")
+    assert out["source"] == "fallback" and "model call failed" in out["planner_note"]

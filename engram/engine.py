@@ -122,15 +122,15 @@ class Engine:
 
         check = check_plan(res.plan, self.memory, self.zones)
         plan_digest = digest(res.plan)
-        meta = {"targets": res.targets, "zone": res.zone, "source": res.source, "digest": plan_digest,
-                "check": check.to_dict(), "bundle": bundle.to_dict()}
+        meta = {"targets": res.targets, "zone": res.zone, "source": res.source, "planner_note": res.note,
+                "digest": plan_digest, "check": check.to_dict(), "bundle": bundle.to_dict()}
         status = "proposed" if check.ok else "rejected"
         self._episode(episode_id, request, res.plan, meta, status, None if check.ok else "; ".join(check.errors), res,
                       skill_id=skill["id"] if skill else None)
         return {
             "operation_id": episode_id, "status": status, "plan": res.plan, "digest": plan_digest,
             "check": check.to_dict(), "memory": bundle.to_dict(), "source": res.source,
-            "planner_calls": res.planner_calls, "planning_ms": round(res.planning_ms, 3),
+            "planner_note": res.note, "planner_calls": res.planner_calls, "planning_ms": round(res.planning_ms, 3),
         }
 
     def propose_fixed(self, goal: str, steps: list[dict[str, Any]], source: str) -> dict[str, Any]:
@@ -239,7 +239,7 @@ class Engine:
         for r in rows:
             meta = json.loads(r["evidence_json"] or "{}")
             out.append({"operation_id": r["id"], "request": r["request"], "plan": json.loads(r["plan_json"]),
-                        "digest": meta.get("digest"), "source": meta.get("source"), "proposed_at": r["started_at"]})
+                        "digest": meta.get("digest"), "source": meta.get("source"), "planner_note": meta.get("planner_note", ""), "proposed_at": r["started_at"]})
         return out
 
     def events(self, limit: int = 200) -> list[dict[str, Any]]:

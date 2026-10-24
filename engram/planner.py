@@ -11,6 +11,7 @@ The planner only proposes. It never talks to the robot.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import urllib.request
@@ -32,6 +33,7 @@ FUTURE_HINTS = re.compile(
     r"\b(when|whenever|once|after|as soon as|until|later|tomorrow|tonight|in \d+ (?:seconds?|minutes?|hours?))\b"
 )
 DEFAULT_ZONE = "bench"
+log = logging.getLogger("engram.planner")
 
 
 @dataclass
@@ -40,7 +42,8 @@ class PlanResult:
     refused: str | None = None
     planner_calls: int = 0
     planning_ms: float = 0.0
-    source: str = "rules"          # rules | model | skill
+    source: str = "rules"          # rules | model | fallback (model failed, rules used) | skill
+    note: str = ""                 # why the model was not used, or the start of its raw reply
     targets: list[str] = field(default_factory=list)
     zone: str | None = None
 
@@ -151,18 +154,25 @@ class LlamaCppPlanner:
             return PlanResult(None, refused=why)
         t0 = time.perf_counter()
         body = json.dumps({"prompt": self._prompt(request, bundle), "n_predict": 512, "temperature": 0}).encode()
+        text, why = "", ""
         try:
             req = urllib.request.Request(self.url, body, {"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
                 text = json.loads(r.read())["content"]
+            log.info("model reply starts: %r", text[:200])
             plan = extract_json(text)
-        except Exception:
-            plan = None
+            if not isinstance(plan, dict):
+                why = "model reply had no JSON plan"
+        except Exception as e:
+            plan, why = None, f"model call failed: {type(e).__name__}: {e}"
         ms = (time.perf_counter() - t0) * 1000
         if not isinstance(plan, dict):
             res = self.fallback.plan(request, bundle, memory)
             res.planner_calls += 1
             res.planning_ms += ms
+            if res.plan is not None:
+                res.source = "fallback"
+            res.note = f"{why}; reply starts: {text[:200]!r}" if text else why
             return res
-        return PlanResult(plan, planner_calls=1, planning_ms=ms, source="model",
+        return PlanResult(plan, planner_calls=1, planning_ms=ms, source="model", note=f"reply starts: {text[:200]!r}",
                           targets=targets_in(request, memory), zone=find_zone(request, self.zones))
