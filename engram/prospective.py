@@ -23,11 +23,28 @@ def normalize(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+# A question about the past or present ("After the experiment finished, what happened to sample A?") is recall,
+# never a commitment (EC15 t10.2 / practice check M2): it must not be scheduled.
+_QUESTION_START = re.compile(
+    r"^\s*(what|where|which|who|whom|whose|why|how|when|did|does|do|was|were|is|are|has|have|had|can|could)\b",
+    re.IGNORECASE,
+)
+
+
+def is_question(text: str) -> bool:
+    return text.strip().endswith("?")
+
+
 def parse_when(text: str) -> tuple[str, str] | None:
+    if is_question(text):
+        return None
     m = _WHEN.match(text)
     if not m:
         return None
-    return normalize(m.group("trigger")), m.group("request").strip()
+    request = m.group("request").strip()
+    if _QUESTION_START.match(request):
+        return None
+    return normalize(m.group("trigger")), request
 
 
 class Prospective:

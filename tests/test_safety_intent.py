@@ -44,3 +44,22 @@ def test_future_intent_that_does_not_parse_is_refused_never_moved(taught, text):
 
 def test_ordinary_requests_still_plan():
     assert refusal("Take Sample B to the bench") is None
+
+
+@pytest.mark.parametrize("text", [
+    "After the experiment finished, what happened to sample A?",
+    "Once the timer went off, where did Sample B go?",
+    "When the incubation ended, which station was used",
+])
+def test_a_question_about_the_past_is_never_scheduled_or_moved(taught, text):
+    # Practice check M2 (EC15 t10.2): recall is not a commitment.
+    out = taught.command(text, "test")
+    assert out["kind"] != "scheduled"
+    assert taught.prospective.list() == []
+    assert taught.robot.calls == [("observe", {})]
+
+
+def test_a_real_future_instruction_is_still_scheduled_alongside_the_question_guard(taught):
+    out = taught.command("When the incubation timer goes off, take Sample B to the bench", "test")
+    assert out["kind"] == "scheduled" and out["created"] is True
+    assert len(taught.prospective.list()) == 1
