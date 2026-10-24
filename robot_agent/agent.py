@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -159,6 +160,16 @@ def make_handler(agent: RobotAgent):
     return Handler
 
 
+class DualStackServer(ThreadingHTTPServer):
+    """Listens on IPv6 and IPv4 at once. Phone hotspots often give the Mac only IPv6."""
+
+    address_family = socket.AF_INET6
+
+    def server_bind(self) -> None:
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8100)
@@ -173,7 +184,11 @@ def main() -> int:
         driver = HiwonderDriver()
     agent = RobotAgent(driver, routes)
     print(f"robot agent on port {args.port} ({'fake' if args.fake else 'hiwonder'})")
-    ThreadingHTTPServer(("0.0.0.0", args.port), make_handler(agent)).serve_forever()
+    try:
+        server: ThreadingHTTPServer = DualStackServer(("::", args.port), make_handler(agent))
+    except OSError:  # no IPv6 on this machine
+        server = ThreadingHTTPServer(("0.0.0.0", args.port), make_handler(agent))
+    server.serve_forever()
     return 0
 
 
