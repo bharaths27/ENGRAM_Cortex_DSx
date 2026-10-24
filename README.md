@@ -34,6 +34,23 @@ the Mac's local IP address instead of localhost.
 - Kiro: File, Open Folder, pick `vaylt_hackathon`. Kiro reads the files in
   `.kiro/steering/` automatically.
 
+## Tags and the overhead camera
+
+```bash
+pip install -r requirements-vision.txt
+python scripts/make_tags.py --mm 30 --out tags.pdf    # print at 100% scale
+python scripts/overhead_camera.py --show              # with the server running
+```
+
+Tags 1 to 4 go on the objects. Tags 10 to 14 go flat on the table in the middle
+of each zone (home, shelf A, shelf B, PPE station, bench). An object belongs to
+the zone tag it is closest to. Mount the webcam looking straight down so every
+zone tag is in view.
+
+## The iPad page
+
+`docs/lovable_prompt.md` is the prompt to paste into Lovable. It matches the API below.
+
 ## How a request flows
 
 ```
@@ -81,8 +98,10 @@ request -> memory bundle (sources, objects, rules, past lessons)
 Working now, with tests: memory, citations, rule learning, checker, approvals,
 journal, skills, future tasks, the fake robot, the HTTP API, and the demo script.
 
-Not built yet: the MasterPi adapter (`engram/robot/masterpi.py`), the overhead
-ArUco reader, voice in and out, the llama.cpp model on the Jetson, and the iPad page.
+Also working: the tag sheet and the overhead tag reader (tested on generated
+images, not yet on the real webcam).
+
+Not built yet: the MasterPi adapter (`engram/robot/masterpi.py`), voice in and out, the llama.cpp model on the Jetson, and the iPad page.
 
 ## Team
 

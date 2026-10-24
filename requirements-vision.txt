@@ -1,0 +1,3 @@
+# Only needed for the overhead camera and the tag sheet.
+opencv-contrib-python==4.10.0.84
+reportlab==5.1.0

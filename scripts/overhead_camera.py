@@ -1,0 +1,82 @@
+"""Watch the table with the overhead webcam and send tag positions to ENGRAM.
+
+    python scripts/overhead_camera.py                  # camera 0, server on localhost
+    python scripts/overhead_camera.py --camera 1 --show
+    python scripts/overhead_camera.py --url http://192.168.1.20:8000
+
+Needs: pip install opencv-contrib-python
+Start the server first (uvicorn --factory engram.api:create_app --port 8000).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from engram.vision.overhead import Debouncer, assign_zones, detect  # noqa: E402
+
+
+def post(url: str, body: dict) -> None:
+    req = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=3).read()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--url", default="http://127.0.0.1:8000")
+    ap.add_argument("--arena", default=str(ROOT / "fixtures/lab/arena.json"))
+    ap.add_argument("--fps", type=float, default=5.0)
+    ap.add_argument("--show", action="store_true", help="open a preview window")
+    args = ap.parse_args()
+
+    import cv2
+
+    arena = json.loads(Path(args.arena).read_text())
+    zone_tags = {int(k): v for k, v in arena["zone_tags"].items()}
+    names = {o["tag"]: o["name"] for o in arena["objects"]}
+    cam = cv2.VideoCapture(args.camera)
+    cam.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    if not cam.isOpened():
+        print(f"could not open camera {args.camera}; try --camera 1")
+        return 1
+    debounce = Debouncer()
+    print("watching; press Ctrl+C to stop")
+    try:
+        while True:
+            ok, frame = cam.read()
+            if not ok:
+                time.sleep(0.2)
+                continue
+            dets = detect(frame)
+            for tag, zone in debounce.update(assign_zones(dets, zone_tags)).items():
+                print(f"{names.get(tag, tag)} -> {zone}")
+                try:
+                    post(f"{args.url}/observations/tag", {"tag_id": tag, "zone": zone})
+                except Exception as e:  # server down: keep watching, report again later
+                    print(f"  could not reach server: {e}")
+                    debounce._reported.pop(tag, None)
+            if args.show:
+                for d in dets:
+                    label = zone_tags.get(d.tag_id) or names.get(d.tag_id, str(d.tag_id))
+                    cv2.putText(frame, label, (int(d.cx), int(d.cy)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                cv2.imshow("ENGRAM overhead", frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+            time.sleep(1.0 / args.fps)
+    except KeyboardInterrupt:
+        pass
+    cam.release()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
