@@ -79,6 +79,14 @@ class HiwonderDriver(Driver):
                                      self.calib.right_motor_ids, self.calib.motor_signs)
         self.motors.stop()
         self.arm_cfg = json.loads(ARM_CONFIG.read_text())
+        # Brian saves poses with ~/engram_robot/tools/arm_pose.py. Use them for any pose
+        # still empty here. His "reach" is our "reach_down".
+        brian = self.ENGRAM_DIR / "arm_poses.json"
+        if brian.exists():
+            for name, pulses in json.loads(brian.read_text()).items():
+                name = "reach_down" if name == "reach" else name
+                if not self.arm_cfg["poses"].get(name):
+                    self.arm_cfg["poses"][name] = pulses
 
     def _speed(self) -> float:
         if self.M_PER_S_AT_DUTY:

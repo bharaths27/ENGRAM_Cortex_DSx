@@ -31,40 +31,45 @@ def call(url: str, path: str, body: dict | None = None) -> dict:
         return json.loads(r.read())
 
 
+ACTIONS = ("state", "stop", "clear", "forward", "back", "turn", "open", "close", "pose", "pick", "place")
+
+
+def run_action(url: str, act: str, value: str | None = None) -> dict:
+    """One action, by the same names as the command line. Used by robot_skill.py too."""
+    url = url.rstrip("/")
+    ex = lambda op, args=None, zone=None: call(url, "/execute", {"op": op, "args": args or {}, "object_zone": zone})
+    here = lambda: call(url, "/state")["at_zone"]
+    if act == "state":
+        return call(url, "/state")
+    if act == "stop":
+        return call(url, "/stop", {})
+    if act == "clear":
+        return call(url, "/clear_stop", {})
+    if act in ("forward", "back"):
+        d = float(value or 0.1)
+        return ex("drive_bounded", {"distance_m": d if act == "forward" else -d})
+    if act == "turn":
+        return ex("turn_bounded", {"degrees": float(value or 90)})
+    if act == "open":
+        return ex("gripper_open")
+    if act == "close":
+        return ex("gripper_close")
+    if act == "pose":
+        return ex("arm_pose", {"pose": value or "home"})
+    if act == "pick":
+        return ex("pick_tagged_object", {"object_id": value or "test_object"}, here())
+    if act == "place":
+        return ex("place_at_zone", {"zone": here()})
+    raise ValueError(f"unknown action {act}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("action")
+    ap.add_argument("action", choices=ACTIONS)
     ap.add_argument("value", nargs="?")
     ap.add_argument("--url", default="http://star-pi.local:8100")
     a = ap.parse_args()
-    url = a.url.rstrip("/")
-    ex = lambda op, args=None, zone=None: call(url, "/execute", {"op": op, "args": args or {}, "object_zone": zone})
-    here = lambda: call(url, "/state")["at_zone"]
-    act = a.action
-    if act == "state":
-        out = call(url, "/state")
-    elif act == "stop":
-        out = call(url, "/stop", {})
-    elif act == "clear":
-        out = call(url, "/clear_stop", {})
-    elif act in ("forward", "back"):
-        d = float(a.value or 0.1)
-        out = ex("drive_bounded", {"distance_m": d if act == "forward" else -d})
-    elif act == "turn":
-        out = ex("turn_bounded", {"degrees": float(a.value or 90)})
-    elif act == "open":
-        out = ex("gripper_open")
-    elif act == "close":
-        out = ex("gripper_close")
-    elif act == "pose":
-        out = ex("arm_pose", {"pose": a.value or "home"})
-    elif act == "pick":
-        out = ex("pick_tagged_object", {"object_id": a.value or "test_object"}, here())
-    elif act == "place":
-        out = ex("place_at_zone", {"zone": here()})
-    else:
-        ap.error(f"unknown action {act}")
-    print(json.dumps(out, indent=2))
+    print(json.dumps(run_action(a.url, a.action, a.value), indent=2))
     return 0
 
 
