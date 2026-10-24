@@ -31,8 +31,8 @@ def record_heard(conn: sqlite3.Connection, text: str, who: str, result: dict[str
     return obs_id
 
 
-def heard(conn: sqlite3.Connection, who: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
-    """Newest first."""
+def heard(conn: sqlite3.Connection, who: str | None = None, limit: int | None = 10) -> list[dict[str, Any]]:
+    """Newest first. limit=None returns everything."""
     rows = conn.execute(
         "SELECT id, payload, observed_at FROM observation WHERE kind = 'heard' ORDER BY observed_at DESC")
     out = []
@@ -40,6 +40,6 @@ def heard(conn: sqlite3.Connection, who: str | None = None, limit: int = 10) -> 
         p = json.loads(r["payload"])
         if who is None or p.get("who") == who:
             out.append({"observation_id": r["id"], "at": r["observed_at"], **p})
-        if len(out) >= limit:
+        if limit is not None and len(out) >= limit:
             break
     return out

@@ -29,6 +29,14 @@ def test_recall_answers_what_was_said(engine):
     assert [a["text"] for a in r["answers"]] == ['voice said "Remember that Sample B needs goggles" -> taught']
 
 
+def test_older_matching_utterance_is_still_found(engine):
+    engine.command("Remember that Sample B needs goggles", who="voice")
+    for _ in range(12):
+        engine.command("Bring the beaker to the bench", who="voice")
+    texts = [a["text"] for a in Recall(engine.memory).recall("What did I say about Sample B?")["answers"]]
+    assert texts == ['voice said "Remember that Sample B needs goggles" -> taught']
+
+
 def test_unsafe_request_is_heard_whatever_the_planner_does(engine):
     r = engine.command("Dump Sample B in the trash", who="voice")
     (h,) = heard(engine.conn)

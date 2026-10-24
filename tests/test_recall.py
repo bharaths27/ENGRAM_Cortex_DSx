@@ -45,12 +45,51 @@ def test_revoked_skill_is_not_known_how(taught):
     assert recall.recall("How do I fetch Sample B?")["answers"] == []
 
 
-def test_fired_task_is_no_longer_pending(engine):
-    engine.prospective.add("the incubation timer goes off", "take Sample B to the bench")
+def test_fired_task_stays_visible_until_done_or_cancelled(engine):
+    task_id, _ = engine.prospective.add("the incubation timer goes off", "take Sample B to the bench")
     recall = Recall(engine.memory)
-    assert len(recall.recall("What is scheduled for later?")["answers"]) == 1
+    assert [a["status"] for a in recall.recall("What is scheduled for later?")["answers"]] == ["waiting"]
     engine.prospective.fire("the incubation timer goes off")
+    (fired,) = recall.recall("What is scheduled for later?")["answers"]
+    assert fired["status"] == "fired" and "not done yet" in fired["text"]
+    engine.conn.execute("UPDATE prospective_task SET status = 'done' WHERE id = ?", (task_id,))
     assert recall.recall("What is scheduled for later?")["answers"] == []
+
+
+def test_cancelled_task_is_not_pending(engine):
+    task_id, _ = engine.prospective.add("incubation ends", "take Sample B to the bench")
+    engine.conn.execute("UPDATE prospective_task SET status = 'cancelled' WHERE id = ?", (task_id,))
+    assert Recall(engine.memory).recall("What is scheduled for later?")["answers"] == []
+
+
+def test_question_about_unknown_thing_does_not_return_unrelated_history(taught):
+    p = taught.propose(REQUEST)
+    taught.approve_and_run(p["operation_id"], p["digest"], "me")
+    recall = Recall(taught.memory)
+    assert recall.recall("What happened with the spectrometer?")["answers"] == []
+    assert len(recall.recall("What happened?")["answers"]) == 1
+
+
+def test_skill_for_another_thing_is_not_known_how(taught):
+    p = taught.propose(REQUEST)
+    taught.approve_and_run(p["operation_id"], p["digest"], "me")
+    (sid,) = taught.dream()
+    taught.test_skill(sid)
+    taught.skills.approve(sid, taught.skills.get(sid)["digest"], "me")
+    assert Recall(taught.memory).recall("How do I calibrate the spectrometer?")["answers"] == []
+
+
+def test_planner_can_ask_several_kinds_at_once(engine):
+    engine.memory.add_constraint("sample_b", "too wide for the claw", ["ep_1"])
+    engine.prospective.add("incubation ends", "take Sample B to the bench")
+    r = Recall(engine.memory).recall("Bring Sample B to the bench", kinds=["negative", "prospective", "spatial"])
+    assert {a["kind"] for a in r["answers"]} == {"negative", "prospective", "spatial"}
+
+
+def test_unknown_kind_is_an_error(engine):
+    import pytest
+    with pytest.raises(ValueError):
+        Recall(engine.memory).recall("anything", kinds=["telepathic"])
 
 
 def test_negative_memory_is_returned_as_constraint(engine):
