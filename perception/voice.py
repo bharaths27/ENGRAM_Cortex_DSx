@@ -53,7 +53,7 @@ SAMPLE_RATE = 16000
 def send_command(server: str, text: str, who: str) -> dict:
     body = json.dumps({"text": text, "who": who}).encode()
     req = urllib.request.Request(server + "/commands", data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=180) as resp:  # the model on the Pi can take about a minute
         return json.loads(resp.read())
 
 
