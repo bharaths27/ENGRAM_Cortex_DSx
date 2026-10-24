@@ -120,6 +120,20 @@ class RulePlanner:
                           source="rules", targets=targets, zone=zone)
 
 
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "goal": {"type": "string"},
+        "steps": {"type": "array", "maxItems": 12, "items": {
+            "type": "object",
+            "properties": {"op": {"type": "string"}, "args": {"type": "object"}},
+            "required": ["op", "args"]}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["goal", "steps", "evidence"],
+}
+
+
 def extract_json(text: str) -> dict | None:
     """The JSON object in a model reply. Qwen3 may think first; drop <think> blocks before parsing."""
     text = re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.S)
@@ -153,7 +167,10 @@ class LlamaCppPlanner:
         if why:
             return PlanResult(None, refused=why)
         t0 = time.perf_counter()
-        body = json.dumps({"prompt": self._prompt(request, bundle), "n_predict": 512, "temperature": 0}).encode()
+        # json_schema makes llama.cpp stop as soon as the plan object closes; without it the model
+        # kept writing prose until n_predict (measured on the Pi 5: 512 tokens, 100 s wasted).
+        body = json.dumps({"prompt": self._prompt(request, bundle), "n_predict": 384, "temperature": 0,
+                           "json_schema": PLAN_SCHEMA}).encode()
         text, why = "", ""
         try:
             req = urllib.request.Request(self.url, body, {"Content-Type": "application/json"})
