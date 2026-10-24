@@ -85,7 +85,10 @@ def main() -> int:
         return 0
     res = call(a.url, f"/operations/{out['operation_id']}/approve",
                {"digest": out["digest"], "approved_by": a.who})
-    print(f"\nOutcome: {res.get('outcome')}" + (f"  ({res['failure']})" if res.get("failure") else ""))
+    outcome = res.get("outcome")
+    if outcome == "success" and any("not sensor checked" in s.get("detail", "") for s in res.get("steps", [])):
+        outcome = "sent, not verified (this robot has no sensor for it; check with your eyes)"
+    print(f"\nOutcome: {outcome}" + (f"  ({res['failure']})" if res.get("failure") else ""))
     for s in res.get("steps", []):
         print(f"  {s['op']}: {s['status']}  {s.get('detail', '')}")
     return 0
