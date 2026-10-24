@@ -1,0 +1,11 @@
+{
+  "note": "Made up demo lab. Tag numbers match the printed ArUco sheet (DICT_4X4_50).",
+  "start_zone": "home",
+  "zones": ["home", "shelf_A", "shelf_B", "ppe_station", "bench"],
+  "objects": [
+    {"id": "sample_a", "name": "Sample A", "tag": 1, "zone": "shelf_A", "graspable": true},
+    {"id": "sample_b", "name": "Sample B", "tag": 2, "zone": "shelf_A", "graspable": true},
+    {"id": "goggles", "name": "Safety goggles", "tag": 3, "zone": "ppe_station", "graspable": true},
+    {"id": "beaker", "name": "Beaker", "tag": 4, "zone": "shelf_B", "graspable": true}
+  ]
+}
