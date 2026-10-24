@@ -9,6 +9,7 @@ rule for what still counts:
 - procedural   only APPROVED skills count as "I know how"
 - prospective  only tasks still waiting count as "must happen later"
 - negative     constraints learned from failure
+- heard        what people said or typed, immutable, with what it became
 
 Whatever cannot be answered is listed under "missing" (meta-memory) instead of
 being guessed. This only reads memory; it never plans or moves anything.
@@ -19,10 +20,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .heard import heard
 from .memory import Memory, ObjectState
 
 # Question shape -> memory kind. Every match is searched; no match -> semantic.
 ROUTES = [
+    ("heard", r"\bwhat did (i|we|you|he|she|they|\w+) (say|tell|ask)\b|\b(said|told|heard)\b"),
     ("spatial", r"\bwhere\b|\blast seen\b|\blocation\b"),
     ("episodic", r"\bwhat happened\b|\bdid (you|it|we)\b|\blast time\b|\bwhy did\b|\bhistory\b"),
     ("procedural", r"\bhow (do|to|can|would)\b|\bskills?\b|\bsteps\b"),
@@ -86,6 +89,12 @@ class Recall:
             "SELECT id, trigger, goal, request FROM prospective_task WHERE status = 'waiting' ORDER BY created_at")
         return [{"text": f"when {r['trigger']}: {r['goal']}", "task_id": r["id"]}
                 for r in rows if not names or any(n in r["request"].lower() for n in names)]
+
+    def heard(self, question: str, objs: list[ObjectState]) -> list[dict[str, Any]]:
+        names = [o.name.lower() for o in objs]
+        return [{"text": f"{h['who']} said \"{h['text']}\" -> {h['became']}", "observation_id": h["observation_id"],
+                 "at": h["at"]}
+                for h in heard(self.conn) if not names or any(n in h["text"].lower() for n in names)]
 
     def negative(self, question: str, objs: list[ObjectState]) -> list[dict[str, Any]]:
         return [{"text": c} for c in self.memory.constraints_for([o.object_id for o in objs])]

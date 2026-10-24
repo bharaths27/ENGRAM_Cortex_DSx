@@ -19,6 +19,7 @@ from .checker import check_plan
 from .db import now
 from .executor import Executor
 from .hashes import hash_models
+from .heard import record_heard
 from .ids import digest, new_id
 from .memory import Memory
 from .planner import PlanResult, RulePlanner, find_zone, refusal, targets_in
@@ -76,7 +77,12 @@ class Engine:
     # ---- commands --------------------------------------------------------
 
     def command(self, text: str, who: str = "user") -> dict[str, Any]:
-        """One entry point for typed or spoken commands."""
+        """One entry point for typed or spoken commands. What was said is kept as heard memory."""
+        result = self._command(text, who)
+        result["heard_id"] = record_heard(self.conn, text.strip(), who, result)
+        return result
+
+    def _command(self, text: str, who: str) -> dict[str, Any]:
         stripped = text.strip()
         low = stripped.lower()
         if low.startswith("remember"):
