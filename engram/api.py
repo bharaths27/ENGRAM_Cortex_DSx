@@ -10,6 +10,8 @@ Environment:
     ENGRAM_UI      folder with the built Lovable page to serve at / (optional)
     ENGRAM_ROBOT_URL  robot agent on the MasterPi, e.g. http://192.168.1.50:8100.
                       Leave unset to use the fake robot.
+    ENGRAM_ROBOT_API  masterpi (default, robot_agent on 8100) or brian (Brian's engram_robot server on 8200)
+    ENGRAM_ROBOT_KEY_FILE  for brian: file holding ENGRAM_ROBOT_SECRET, e.g. ~/engram_robot/robot.env
     ENGRAM_LLM_URL    llama.cpp server completion URL, e.g. http://127.0.0.1:8080/completion.
                       Leave unset to use the rule planner. Any model problem falls back to rules.
     ENGRAM_LLM_TIMEOUT  seconds to wait for the model (default 60; a Pi 4 is slow)
@@ -85,7 +87,13 @@ def default_engine() -> Engine:
     engine = Engine(connect(os.environ.get("ENGRAM_DB", "engram.db")), MockRobot(arena), set(arena["zones"]),
                     planner=planner, models_dir=os.environ.get("ENGRAM_MODELS"))
     robot_url = os.environ.get("ENGRAM_ROBOT_URL")
-    if robot_url:
+    if robot_url and os.environ.get("ENGRAM_ROBOT_API", "masterpi") == "brian":
+        from .robot.brian8200 import BrianRobot, read_secret
+
+        zone_tags = {zone: int(tag) for tag, zone in arena.get("zone_tags", {}).items()}
+        secret = read_secret(os.environ["ENGRAM_ROBOT_KEY_FILE"])
+        engine.set_robot(BrianRobot(robot_url, engine.memory, secret, zone_tags))
+    elif robot_url:
         from .robot.masterpi import MasterPiRobot
 
         engine.set_robot(MasterPiRobot(robot_url, engine.memory))
