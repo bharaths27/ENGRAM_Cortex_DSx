@@ -1,0 +1,17 @@
+{
+  "name": "engram-console-devtests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev/test-only harness for the ENGRAM Cortex console (hud-redesign). NEVER served from web/ and never loaded by the offline console. Holds the fast-check dependency used by the property tests; the runtime console has zero dependencies.",
+  "type": "commonjs",
+  "scripts": {
+    "test:css": "node css-tokens.test.js",
+    "test:hooks": "node dom-hooks.js",
+    "test:offline": "node scan-offline.js",
+    "test:props": "node css-tokens.test.js && node radar-geometry-pbt.js && node overlay-color-pbt.js && node fx-totality.js && node fill-math-pbt.js && node motion-structure-pbt.js && node countup-pbt.js",
+    "test": "npm run test:props && node dom-hooks.js && node scan-offline.js"
+  },
+  "devDependencies": {
+    "fast-check": "3.23.2"
+  }
+}

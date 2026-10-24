@@ -1,0 +1,28 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Run safety property tests on safety-core save",
+      "description": "Any edit to the allowlist, parser or executor re-runs the hypothesis safety properties.",
+      "trigger": "PostFileSave",
+      "matcher": "server/(plan|parser|core)\\.py$",
+      "action": { "type": "command", "command": "python3 -m pytest -q tests/test_safety_pbt.py" },
+      "timeout": 120
+    },
+    {
+      "name": "Offline guard for the HUD",
+      "description": "Blocks accidental CDN/web-font/remote URLs in the iPad UI, which would break the offline demo.",
+      "trigger": "PostFileSave",
+      "matcher": "web/.*\\.(html|js|css)$",
+      "action": { "type": "command", "command": "! (grep -nE 'https?://' web/index.html web/js/*.js web/css/*.css | grep -v 'www.w3.org/2000/svg')" },
+      "timeout": 20
+    },
+    {
+      "name": "Contract drift review",
+      "description": "When the API surface changes, ask the agent to update docs/CONTRACTS.md so teammates stay in sync.",
+      "trigger": "PostFileSave",
+      "matcher": "server/main\\.py$",
+      "action": { "type": "agent", "prompt": "server/main.py changed. Compare its routes and payloads with docs/CONTRACTS.md and update the doc so Brian, Bharath and Deniz see the exact current contract. Do not change code." }
+    }
+  ]
+}
