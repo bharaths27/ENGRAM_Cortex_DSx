@@ -1,0 +1,5 @@
+# Extra packages for perception/ (on top of the repo's requirements.txt)
+opencv-python>=4.8      # overhead tag reader (includes ArUco)
+numpy
+sounddevice             # microphone
+faster-whisper          # speech to text, runs locally; model downloads once
