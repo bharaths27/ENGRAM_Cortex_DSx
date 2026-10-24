@@ -3,15 +3,24 @@
 Every method must return quickly and raise an exception if the hardware call
 fails. The agent turns exceptions into "failed" results.
 
-HiwonderDriver is a starting point. The SDK names below follow Hiwonder's
-MasterPi examples, but they are NOT checked on our robot yet. Open the example
-scripts on the robot's Pi 5 (usually under /home/pi/MasterPi) and fix every
-line marked CHECK before trusting it.
+What is on star-pi (checked Oct 24): there is no stock Hiwonder SDK (no
+HiwonderSDK, ArmIK or mecanum module). The team's own serial driver lives in
+~/engram_robot/drivers/hiwonder_board.py. It talks to the Hiwonder board on
+/dev/ttyAMA0 at 1 Mbaud and gives HiwonderBoard (set_motor_duty, stop_motors,
+set_pwm_servo, beep) and HiwonderMotors (set(left, right) duty -1..1, stop).
+Wheel IDs, wheel directions and the claw servo come from
+~/engram_robot/drive_calib.json. HiwonderDriver reuses those. Lines marked
+CHECK still need a measurement with a person watching.
+
+Do not run this driver and the engram_robot server at the same time: both open
+/dev/ttyAMA0 and both default to port 8100.
 """
 
 from __future__ import annotations
 
+import sys
 import time
+from pathlib import Path
 
 
 class Driver:
@@ -45,49 +54,70 @@ class FakeDriver(Driver):
 
 
 class HiwonderDriver(Driver):
-    # Tune these on the real table. Speeds are Hiwonder units, not m/s.
-    SPEED = 50                 # CHECK
-    M_PER_S_AT_SPEED = 0.15    # CHECK: measure with a tape
-    DEG_PER_S = 90.0           # CHECK: measure one full turn
-    GRIPPER_OPEN, GRIPPER_CLOSED = 1500, 2000   # CHECK: servo 1 pulse widths
-    POSES = {                  # CHECK: (x, y, z) in cm for the arm IK
-        "home": (0, 6, 18),
-        "reach_down": (0, 17, 1.5),
-        "carry": (0, 10, 12),
+    # Skid steer: the board takes a duty cycle, not a speed, so moves are timed.
+    ENGRAM_DIR = Path.home() / "engram_robot"
+    DRIVE_DUTY = 0.4           # same duty spin.py used; keep low until measured
+    TURN_DUTY = 0.4
+    M_PER_S_AT_DUTY = None     # CHECK: tape measure at DRIVE_DUTY. None = estimate from drive_calib.json
+    DEG_PER_S = 90.0           # CHECK: time one full spin at TURN_DUTY, then 360 / seconds
+    MAX_SECONDS = 4.0          # never run the wheels longer than this in one step
+    # Arm: MasterPi arm servos are PWM servos on the same board, but no IK library is on the Pi.
+    # Each pose is {servo_id: pulse_us}. CHECK: find ids and pulses with
+    # `python tools/hw_test.py servo <id> <pulse>` in ~/engram_robot, 100 us steps, person watching.
+    POSES: dict[str, dict[int, int]] = {
+        "home": {},
+        "reach_down": {},
+        "carry": {},
     }
 
     def __init__(self) -> None:
-        import HiwonderSDK.Board as Board          # CHECK
-        import HiwonderSDK.mecanum as mecanum      # CHECK
-        from ArmIK.ArmMoveIK import ArmIK          # CHECK
+        sys.path.insert(0, str(self.ENGRAM_DIR))
+        from drivers.hiwonder_board import HiwonderBoard, HiwonderMotors
+        from drivers.motors import DriveCalib
 
-        self.board = Board
-        self.chassis = mecanum.MecanumChassis()
-        self.ik = ArmIK()
+        self.calib = DriveCalib.load(str(self.ENGRAM_DIR / "drive_calib.json"))
+        self.board = HiwonderBoard()
+        self.motors = HiwonderMotors(self.board, self.calib.left_motor_ids,
+                                     self.calib.right_motor_ids, self.calib.motor_signs)
+        self.motors.stop()
 
-    def _move(self, direction: float, angular: float, seconds: float) -> None:
-        self.chassis.set_velocity(self.SPEED if angular == 0 else 0, direction, angular)  # CHECK
-        time.sleep(seconds)
-        self.chassis.set_velocity(0, 0, 0)
+    def _speed(self) -> float:
+        if self.M_PER_S_AT_DUTY:
+            return self.M_PER_S_AT_DUTY
+        c = self.calib
+        return max(0.01, c.mps_at_full * (self.DRIVE_DUTY - c.deadband) / (1.0 - c.deadband))
+
+    def _run(self, left: float, right: float, seconds: float) -> None:
+        seconds = min(seconds, self.MAX_SECONDS)
+        try:
+            self.motors.set(left, right)
+            time.sleep(seconds)
+        finally:
+            self.motors.stop()
 
     def drive(self, distance_m: float) -> None:
-        direction = 90 if distance_m >= 0 else 270   # CHECK: 90 is forward in Hiwonder examples
-        self._move(direction, 0, abs(distance_m) / self.M_PER_S_AT_SPEED)
+        d = self.DRIVE_DUTY if distance_m >= 0 else -self.DRIVE_DUTY
+        self._run(d, d, abs(distance_m) / self._speed())
 
     def turn(self, degrees: float) -> None:
-        rate = 0.3 if degrees >= 0 else -0.3          # CHECK: sign and size
-        self._move(0, rate, abs(degrees) / self.DEG_PER_S)
+        # Positive = left (counter clockwise), same as spin.py: left side back, right side forward.
+        d = self.TURN_DUTY if degrees >= 0 else -self.TURN_DUTY
+        self._run(-d, d, abs(degrees) / self.DEG_PER_S)
 
     def gripper(self, open_: bool) -> None:
-        pulse = self.GRIPPER_OPEN if open_ else self.GRIPPER_CLOSED
-        self.board.setPWMServoPulse(1, pulse, 500)    # CHECK
+        c = self.calib
+        if c.claw_open_us == c.claw_closed_us:
+            raise RuntimeError("claw pulses not calibrated in drive_calib.json")  # CHECK
+        self.board.set_pwm_servo(c.claw_servo_id, c.claw_open_us if open_ else c.claw_closed_us, 500)
         time.sleep(0.6)
 
     def arm(self, pose: str) -> None:
-        ok = self.ik.setPitchRangeMoving(self.POSES[pose], -90, -90, 0, 1000)  # CHECK
-        if not ok:
-            raise RuntimeError(f"arm cannot reach pose {pose}")
+        pulses = self.POSES.get(pose)
+        if not pulses:
+            raise RuntimeError(f"arm pose {pose} not measured yet")
+        for servo_id, pulse in pulses.items():
+            self.board.set_pwm_servo(servo_id, pulse, 1000)
         time.sleep(1.1)
 
     def stop_all(self) -> None:
-        self.chassis.set_velocity(0, 0, 0)
+        self.motors.stop()
