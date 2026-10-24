@@ -24,11 +24,11 @@
       <g class="spokes"></g>
       <circle cx="100" cy="100" r="26" class="core"/>
     </svg>
-    <h1 class="boot-title"><span>ENGRAM</span> CORTEX</h1>
+    <h1 class="boot-title"><b>ENGRAM</b> <span>CORTEX</span></h1>
     <p class="boot-sub">offline memory to action console</p>
     <pre id="boot-log"></pre>
-    <button id="engage" class="engage">TAP TO ENGAGE</button>
-    <p class="boot-note">Tapping unlocks audio on iPad. Nothing moves without approval.</p>
+    <button id="engage" class="engage" hidden>TAP TO ENGAGE</button>
+    <p class="boot-note">Nothing moves without approval.</p>
   </div>
 </section>
 
@@ -36,22 +36,23 @@
 <main id="hud" class="hidden">
   <header class="topbar panel-in" style="--d:0">
     <div class="brand">
-      <svg viewBox="0 0 40 40" class="mini-reactor"><circle cx="20" cy="20" r="17"/><circle cx="20" cy="20" r="11"/><circle cx="20" cy="20" r="5" class="c"/></svg>
+      <svg viewBox="0 0 48 48" class="mini-reactor" aria-hidden="true"><circle cx="24" cy="24" r="21" class="o"/><circle cx="24" cy="24" r="13.5" class="i"/><circle cx="24" cy="24" r="6.6" class="cr"/><circle cx="24" cy="24" r="5.4" class="c"/></svg>
       <div><b>ENGRAM</b><span>CORTEX</span></div>
     </div>
     <div class="chips">
-      <span class="chip" id="chip-net" title="Upstream internet"><i></i><em>UPSTREAM</em><b>…</b></span>
-      <span class="chip" id="chip-link" title="Console link"><i></i><em>LINK</em><b>…</b></span>
-      <span class="chip" id="chip-robot" title="Robot adapter"><i></i><em>ROBOT</em><b>…</b></span>
-      <span class="chip" id="chip-lidar" title="Nearest obstacle ahead"><i></i><em>LIDAR</em><b>…</b></span>
-      <span class="chip" id="chip-model" title="Model SHA-256 (weights unchanged)"><i></i><em>MODEL</em><b>…</b></span>
-      <span class="chip warn hidden" id="chip-sim"><i></i><em>SIMULATOR</em><b>NOT REAL ROBOT</b></span>
+      <span class="chip" id="chip-net" title="Internet connection (the demo runs without it)"><i></i><em>Internet</em><b>…</b></span>
+      <span class="chip" id="chip-link" title="Console link"><i></i><em>Link</em><b>…</b></span>
+      <span class="chip" id="chip-robot" title="Robot adapter"><i></i><em>Robot</em><b>…</b></span>
+      <span class="chip" id="chip-lidar" title="Nearest obstacle ahead"><i></i><em>Obstacle ahead</em><b>…</b></span>
+      <span class="chip" id="chip-model" title="Model SHA-256 (weights unchanged)"><i></i><em>Model</em><b>…</b></span>
+      <span class="chip warn hidden" id="chip-sim" style="display:none"><i></i><em>SIMULATOR</em><b>NOT REAL ROBOT</b></span>
     </div>
     <div class="top-right">
+      <a class="icon-btn back-btn" id="back-front" href="/" target="_top" title="Back to the ENGRAM Cortex home page">&larr; Home</a>
       <button class="icon-btn" id="mode-toggle" type="button" aria-pressed="false" title="Simple view — tap for Expert">Simple</button>
       <button class="icon-btn" id="tour-replay" type="button" title="Take the quick tour of the controls">Tour</button>
       <button class="icon-btn" id="btn-mute" title="Voice on/off">🔊</button>
-      <button class="icon-btn" id="btn-teach" title="Teach a rule">＋ RULE</button>
+      <button class="icon-btn" id="btn-teach" title="Teach a rule">＋ Rule</button>
       <span id="clock">--:--:--</span>
     </div>
   </header>
@@ -91,7 +92,7 @@
 
   <section class="col col-mid">
     <div class="panel plan panel-in" style="--d:3">
-      <div class="panel-h"><span>What the robot will do</span><em id="plan-meta">no plan</em><button type="button" class="panel-help" data-help="plan" aria-label="What is the plan panel?">?</button></div>
+      <div class="panel-h"><span>Plan</span><em id="plan-meta">no plan</em><button type="button" class="panel-help" data-help="plan" aria-label="What is the plan panel?">?</button></div>
       <div id="right-now" aria-live="polite" aria-atomic="true"></div>
       <div id="plan-body" class="plan-body">
         <div class="empty">Tell the robot what to do. You approve every physical step before it moves.</div>

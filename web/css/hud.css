@@ -7,9 +7,10 @@
   --border: rgba(210, 214, 220, 0.10);
   --text: #DADDE2;
   --muted: #8A9099;
-  --orange: #E8915A;
-  --orange-hi: #F0A574;
-  --orange-soft: rgba(232, 145, 90, 0.14);
+  --orange: #FB8225;
+  --logo-silver: #BCBEC0;
+  --orange-hi: #FFA351;
+  --orange-soft: rgba(251, 130, 37, 0.14);
   --sage: #8FBF9A;
   --red: #D96A6A;
   --steel: #A9B4C2;
@@ -70,10 +71,15 @@ body.estop #fx-vignette { box-shadow: inset 0 0 140px rgba(0,0,0,0.85), inset 0 
 /* screen glitch neutralized (Reqs 4.4, 18.4, 18.5): body.glitch toggles a harmless class, no distortion animation */
 
 /* ---------- boot ---------- */
-#boot { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: radial-gradient(circle at 50% 40%, var(--raised), var(--bg) 70%); transition: opacity .7s, transform .7s; }
-#boot.out { opacity: 0; transform: scale(1.08); pointer-events: none; }
+#boot { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: radial-gradient(circle at 50% 40%, #111215, #030303 72%); transition: opacity .7s, transform .7s; }
+#boot.out { opacity: 0; pointer-events: none; transition: opacity .6s ease .7s; }
+/* Exit: the text fades first, then the logo zooms out toward the viewer and dissolves into the HUD. */
+#boot .reactor { transition: transform 1.2s cubic-bezier(.6,0,.3,1), opacity 1.1s ease-in .15s; }
+#boot.out .reactor { transform: translate(var(--dx, 0px), var(--dy, 0px)) scale(7); opacity: 0; }
+#boot .boot-title, #boot .boot-sub, #boot-log, #boot .boot-note { transition: opacity .35s ease-out; }
+#boot.out .boot-title, #boot.out .boot-sub, #boot.out #boot-log, #boot.out .boot-note { opacity: 0; }
 .boot-core { text-align: center; width: min(720px, 92vw); }
-.reactor { width: 200px; height: 200px; filter: drop-shadow(0 0 4px rgba(232,145,90,.35)); }
+.reactor { width: 200px; height: 200px; filter: drop-shadow(0 0 4px rgba(251, 130, 37,.35)); }
 .reactor .r { fill: none; stroke: var(--steel); stroke-width: 1.5; transform-origin: 100px 100px; }
 .reactor .r1 { stroke-dasharray: 4 10; animation: spin 12s linear infinite; }
 .reactor .r2 { stroke-dasharray: 60 20 6 20; stroke-width: 3; stroke: var(--orange); animation: spin 7s linear infinite reverse; opacity: .8; }
@@ -81,9 +87,10 @@ body.estop #fx-vignette { box-shadow: inset 0 0 140px rgba(0,0,0,0.85), inset 0 
 .reactor .core { fill: var(--orange-soft); stroke: var(--orange); stroke-width: 2; animation: pulse 2.6s ease-in-out infinite; transform-origin: 100px 100px; }
 .reactor .spokes line { stroke: var(--steel); stroke-width: 6; opacity: .55; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pulse { 50% { fill: rgba(232,145,90,.3); transform: scale(1.08); } }
+@keyframes pulse { 50% { fill: rgba(251, 130, 37,.3); transform: scale(1.08); } }
 .boot-title { font: 600 44px/1 var(--sans); letter-spacing: normal; margin: 18px 0 4px; color: var(--text); }
 .boot-title span { color: var(--orange); }
+.boot-title b { color: var(--logo-silver); font-weight: inherit; }
 .boot-sub { color: var(--muted); letter-spacing: normal; font-size: 11px; margin: 0 0 18px; }
 #boot-log { text-align: left; height: 128px; overflow: hidden; color: var(--muted); font-size: 11px; margin: 0 auto 16px; width: 100%; white-space: pre-wrap; font-family: var(--mono); }
 #boot-log b { color: var(--sage); font-weight: 400; }
@@ -157,11 +164,14 @@ body.estop #fx-vignette { box-shadow: inset 0 0 140px rgba(0,0,0,0.85), inset 0 
 .topbar { display: flex; align-items: center; gap: 14px; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
 .brand { display: flex; align-items: center; gap: 10px; font: 600 18px var(--sans); letter-spacing: .01em; }
 .brand span { color: var(--orange); margin-left: .4em; }
-.mini-reactor { width: 30px; height: 30px; }
-.mini-reactor circle { fill: none; stroke: var(--steel); stroke-width: 1.5; transform-origin: 20px 20px; }
-.mini-reactor circle:nth-child(1) { stroke-dasharray: 3 4; animation: spin 8s linear infinite; }
-.mini-reactor circle:nth-child(2) { stroke-dasharray: 18 6; animation: spin 4s linear infinite reverse; }
-.mini-reactor .c { fill: var(--orange); animation: pulse 2s infinite; }
+.brand b { color: var(--logo-silver); font-weight: 600; }
+.brand > div { font-size: 15px; letter-spacing: .22em; }
+.mini-reactor { width: 34px; height: 34px; }
+.mini-reactor circle { fill: none; stroke-linecap: round; transform-origin: 24px 24px; }
+.mini-reactor .o { stroke: var(--orange); stroke-width: 2.2; stroke-dasharray: 4.2 5.7; animation: spin 9s linear infinite; }
+.mini-reactor .i { stroke: var(--logo-silver); stroke-width: 2.2; stroke-dasharray: 36 6.4; animation: spin 5s linear infinite reverse; }
+.mini-reactor .cr { stroke: var(--logo-silver); stroke-width: 1.4; }
+.mini-reactor .c { fill: var(--orange); stroke: none; animation: pulse 2.4s ease-in-out infinite; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 20px; font-size: 10.5px; background: rgba(0,0,0,.25); white-space: nowrap; }
 /* status dots breathe gently (Reqs 8.1, 8.2, 8.3): opacity 0.4<->1.0 over 4s, no glow, no restart jump */
@@ -179,6 +189,7 @@ body.estop #fx-vignette { box-shadow: inset 0 0 140px rgba(0,0,0,0.85), inset 0 
 @keyframes blink { 50% { opacity: .25; } }
 .top-right { display: flex; align-items: center; gap: 8px; }
 #clock { font-size: 16px; color: var(--steel); letter-spacing: .1em; min-width: 84px; text-align: right; font-family: var(--mono); }
+.back-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .icon-btn { background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 11px; letter-spacing: .1em; color: var(--steel); }
 @media (hover: hover) { .icon-btn:not(:disabled):hover { background: var(--orange-soft); } }
 
@@ -634,3 +645,47 @@ body.simple #mem-meta { display: none; }
    no existing content in Simple. */
 .tech-caption { display: none; }
 body.expert .tech-caption { display: inline; }
+
+/* ---------- Calmer top bar (Verna, demo polish) ----------
+   Plain-case labels, fewer chips. The link chip only appears when the link is lost;
+   model hash and clock are Expert-only. STOP and warnings are untouched. */
+.chip { font-size: 12px; padding: 5px 11px; gap: 7px; }
+.chip em { letter-spacing: normal; }
+.chip b { font-weight: 600; }
+#chip-link:not(.bad) { display: none; }
+body.simple #chip-model, body.simple #clock { display: none; }
+.icon-btn { font-size: 12px; letter-spacing: normal; padding: 7px 12px; }
+.topbar .chips { flex-wrap: nowrap; overflow: hidden; }
+
+/* ---------- Calm pass (Verna): less "sci-fi HUD", more breathing room ----------
+   Decoration only. STOP, approvals, warnings and every element id are untouched. */
+.panel::before, .panel::after { display: none; }          /* corner brackets */
+#fx-vignette { box-shadow: inset 0 0 120px rgba(0,0,0,.45); }
+.cam-sweep, .heading-tape, .cam-corners { display: none; }
+.panel { border-radius: 14px; border-color: rgba(255,255,255,.06); background: rgba(28,29,33,.72); }
+.panel-h { padding: 12px 16px; border-bottom-color: rgba(255,255,255,.05); font-size: 15px; color: var(--text); }
+.panel-h em { font: 400 12px var(--sans); letter-spacing: normal; }
+.empty { font-size: 14px; line-height: 1.5; padding: 18px 16px; }
+.rec { font: 600 11px var(--sans); letter-spacing: .04em; }
+.rec i { animation: breathe-dot 2.4s ease-in-out infinite; }
+.heard { font-family: var(--sans); padding: 4px 16px 8px; }
+.heard em { font-size: 11px; letter-spacing: .08em; }
+#heard { font-size: 15px; }
+.quick { padding: 4px 16px 14px; gap: 8px; }
+.quick button { border-style: solid; border-radius: 999px; padding: 8px 14px; font-size: 13px; }
+#hud { gap: 14px; }
+
+/* Simple mode: only what a first-time viewer needs. Range radar, timings and
+   activity move to Expert; the "Obstacle ahead" chip (red + "too close") still shows the veto. */
+body.simple .panel.radar-p { display: none; }
+body.simple #cam-meta, body.simple #minimap-meta, body.simple #skills-meta { display: none; }
+
+/* Smaller STOP in the corner (still a 76px touch target, well above iPad minimum). */
+.stop { width: 76px; height: 76px; border-width: 2px; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); }
+.stop span { font-size: 16px; }
+.stop small { font-size: 8px; }
+.stop::after { inset: -6px; }
+.col-right { padding-bottom: 96px; }
+
+/* Per-panel "?" help buttons removed from view (Verna). The Tour still explains every panel. */
+.panel-help { display: none !important; }

@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, llm, voice
+from . import brain, config, llm, voice
 from .adapters.memory import make_memory
 from .adapters.robot import make_camera, make_robot
 from .core import Bus, Engine, Ledger, Operation, hash_models, upstream_online
@@ -66,6 +66,8 @@ async def lifespan(app):
     STATUS["models"] = await asyncio.to_thread(hash_models, config.MODELS_DIR)
     ledger.append("boot", robot=config.ROBOT_URL, memory=config.MEMORY_URL, models=STATUS["models"])
     tasks = [asyncio.create_task(f()) for f in (_state_loop, _net_loop, _expiry_loop)]
+    if brain.enabled():
+        tasks.append(asyncio.create_task(_brain_pending_loop()))
     yield
     for t in tasks:
         t.cancel()
@@ -90,6 +92,7 @@ async def status():
     return {"upstream_online": STATUS["upstream_online"], "models": STATUS["models"], "robot_url": config.ROBOT_URL,
             "memory_url": config.MEMORY_URL, "llm": config.LLM_URL != "off", "tts": voice.tts_status(),
             "stt": voice.stt_status(), "stopped": engine.stopped, "simulated": config.ROBOT_URL == "mock",
+            "brain_url": config.BRAIN_URL, "brain": (await brain.health()) if brain.enabled() else None,
             "boot": STATUS["boot"]}
 
 
@@ -169,6 +172,8 @@ async def handle_command(text: str, source: str) -> dict:
     t0 = time.time()
     await bus.emit("heard", text=text, source=source)
     ledger.append("command", text=text, source=source)
+    if brain.enabled():
+        return await _brain_command(text, source, t0)
     scene = STATUS.get("last_state") or {}
     tm = time.time()
     try:
@@ -226,6 +231,56 @@ async def _fire_later(task: dict, delay: float):
     await bus.emit("prospective_fired", task=task)
     await bus.emit("say", text="Scheduled task is due. Plan staged for your approval.")
     await handle_command(task["text"], "prospective")
+
+
+async def _brain_command(text: str, source: str, t0: float) -> dict:
+    """EC08: Bharath's brain plans; the console shows it and relays the human approval."""
+    try:
+        p = await brain.command(text)
+    except Exception as e:  # noqa: BLE001
+        msg = f"ENGRAM brain unreachable ({brain.URL}): {e}"
+        await bus.emit("log", level="error", msg=msg)
+        await bus.emit("say", text="I can't reach the planner right now.")
+        return {"kind": "abstain", "reason": msg}
+    metrics = {"plan_ms": int((time.time() - t0) * 1000), "planner_calls": p.get("planner_calls", 0)}
+    if p.get("memory"):
+        await bus.emit("bundle", bundle=brain.to_bundle(p["memory"]), memory_ms=0)
+    kind = p.get("kind")
+    out = {"kind": kind, "brain": p, "metrics": metrics}
+    if kind == "proposal" and p.get("status") == "proposed" and p.get("digest"):
+        op = brain.RemoteOperation(p, text, source, metrics)
+        await engine.stage(op)
+        out["kind"], out["operation"] = "plan", op.public()
+        await bus.emit("say", text="Here's my plan. Hold to approve.")
+    elif kind == "proposal":
+        reason = p.get("reason") or p.get("status") or "refused"
+        out.update(kind="abstain", reason=reason)
+        await bus.emit("parsed", kind="abstain", reason=reason, quip="", trace=[f"brain: {p.get('status')}"], data={}, metrics=metrics)
+        await bus.emit("say", text=reason)
+    elif kind == "scheduled":
+        task = {"id": p.get("task_id"), "text": p.get("request"), "trigger": p.get("trigger"), "status": "PENDING", "created_at": time.time()}
+        out["prospective"] = task
+        await bus.emit("prospective", task=task, tasks=[task])
+        await bus.emit("say", text=f"Okay. I'll do that when {p.get('trigger')}, and ask you first.")
+    elif kind == "taught":
+        await bus.emit("rule", result=p, text=text)
+        await bus.emit("say", text="Got it. I saved that as a new source.")
+    ledger.append("brain_command", text=text, source=source, result_kind=kind, operation_id=p.get("operation_id"))
+    return out
+
+
+async def _brain_pending_loop():
+    """Plans the brain made on its own (gestures, fired triggers) also show up for approval."""
+    while True:
+        for p in await brain.pending():
+            oid = p.get("operation_id")
+            if oid and oid not in engine.ops and p.get("digest"):
+                try:
+                    await engine.stage(brain.RemoteOperation(p, (p.get("plan") or {}).get("goal", ""), "brain", {}))
+                    await bus.emit("say", text="A new plan is waiting for your approval.")
+                except Exception as e:  # noqa: BLE001
+                    await bus.emit("log", level="warn", msg=f"pending plan not shown: {e}")
+        await asyncio.sleep(2)
 
 
 @app.post("/commands")

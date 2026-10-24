@@ -14,6 +14,8 @@ def _env(name: str, default: str) -> str:
 ROBOT_URL = _env("ENGRAM_ROBOT_URL", "mock")
 # Where Bharath's memory API lives. "mock" = built-in sample memory.
 MEMORY_URL = _env("ENGRAM_MEMORY_URL", "mock")
+# Bharath's ENGRAM brain API (plans + approvals + execution). "off" = console plans by itself.
+BRAIN_URL = _env("ENGRAM_BRAIN_URL", "off")
 # Where Deniz's metrics / dream compiler lives. "off" = skip.
 METRICS_URL = _env("ENGRAM_METRICS_URL", "off")
 

@@ -167,6 +167,10 @@ class Engine:
             return None
 
     async def _run(self, op: Operation) -> None:
+        if getattr(op, "remote", False):
+            from . import brain
+            await brain.run(self, op)
+            return
         op.status = "EXECUTING"
         t0 = time.time()
         await self.bus.emit("operation", op=op.public())
@@ -265,6 +269,9 @@ class Engine:
     async def stop(self, by="operator") -> dict:
         self.stopped = True
         res = await self.robot.stop()
+        from . import brain
+        if brain.enabled():
+            res = {**(res or {}), "brain": await brain.stop()}
         for op in self.ops.values():
             if op.status == "PENDING_APPROVAL":
                 op.status = "CANCELLED"
@@ -277,6 +284,9 @@ class Engine:
 
     async def clear_stop(self) -> dict:
         res = await self.robot.clear_stop()
+        from . import brain
+        if brain.enabled():
+            res = {**(res or {}), "brain": await brain.clear_stop()}
         self.stopped = False
         self.ledger.append("estop_clear", robot=res)
         await self.bus.emit("stop_clear", robot=res)

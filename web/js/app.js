@@ -17,7 +17,7 @@
   };
   const PALETTE = {
     steel:   CSSVAR("--steel", "#A9B4C2"),
-    orange:  CSSVAR("--orange", "#E8915A"),
+    orange:  CSSVAR("--orange", "#FB8225"),
     sage:    CSSVAR("--sage", "#8FBF9A"),
     red:     CSSVAR("--red", "#D96A6A"),
     muted:   CSSVAR("--muted", "#8A9099"),
@@ -63,6 +63,7 @@
       : "";
   // overlay bottom-left telemetry lines (content only).
   const overlayTelemetry = (robot) => {
+    if (document.body.classList.contains("simple")) return [];
     const p = (robot && robot.pose) || {};
     return [
       `GRIP ${String((robot && robot.gripper) || "?").toUpperCase()}${robot && robot.holding_tag != null ? " · TAG " + robot.holding_tag : ""}`,
@@ -222,8 +223,8 @@
   }
 
   async function bootSequence() {
-    FX.unlock(); VOICE.unlock(); FX.play("boot");
-    const btn = $("#engage"); btn.disabled = true; btn.textContent = "INITIALIZING";
+    try { FX.unlock(); VOICE.unlock(); FX.play("boot"); } catch (e) {}
+    const btn = $("#engage"); if (btn) { btn.disabled = true; btn.hidden = true; }
     const log = $("#boot-log");
     let st = {};
     try { st = await api("GET", "/status"); } catch (e) {}
@@ -248,21 +249,41 @@
     }
     log.innerHTML += "\n<b>ALL SYSTEMS NOMINAL</b>";
     await new Promise(r => setTimeout(r, 450));
+    // Zoom the logo out from the exact middle of the screen, not from where it sits above the text.
+    try {
+      const rc = $("#boot .reactor").getBoundingClientRect();
+      const dx = innerWidth / 2 - (rc.left + rc.width / 2), dy = innerHeight / 2 - (rc.top + rc.height / 2);
+      $("#boot .reactor").style.setProperty("--dx", dx + "px");
+      $("#boot .reactor").style.setProperty("--dy", dy + "px");
+    } catch (e) {}
     $("#boot").classList.add("out");
     $("#hud").classList.remove("hidden");
     requestAnimationFrame(() => {
       $("#hud").classList.add("live");
       // The HUD is now live — the moment to offer the first-run tour (Req 8.1).
       // maybeTour() gates itself on the fui.toured flag so it shows at most once.
-      maybeTour();
+      setTimeout(maybeTour, 1400); // wait for the logo zoom-out to finish
     });
     FX.flash();
     VOICE.say(st.upstream_online === false ? "Cortex online. Running entirely offline." : "Cortex online.");
-    setTimeout(() => $("#boot").remove(), 900);
+    setTimeout(() => $("#boot").remove(), 1500);
     startCamera();
     connect();
   }
-  $("#engage").addEventListener("click", bootSequence);
+  // Starts on its own (no ENGAGE tap). Browsers only allow sound after a touch or key,
+  // so audio unlocks on the first tap or key press anywhere.
+  const unlockAudio = () => { try { FX.unlock(); VOICE.unlock(); } catch (e) {} };
+  document.addEventListener("pointerdown", unlockAudio, { once: true, capture: true });
+  document.addEventListener("keydown", unlockAudio, { once: true, capture: true });
+  // "Home" goes back to the ENGRAM Cortex front page (the Lovable site). Inside the
+  // dashboard frame that is the page that embedded us; opened directly, it is port 8080.
+  (function wireHome() {
+    const a = $("#back-front"); if (!a) return;
+    let home = location.protocol + "//" + location.hostname + ":8080/";
+    try { if (window.top !== window && document.referrer) home = new URL(document.referrer).origin + "/"; } catch (e) {}
+    a.href = home;
+  })();
+  bootSequence();
 
   // -------------------------------------------------------------- websocket
   function connect() {
@@ -321,8 +342,8 @@
   }
   function applyStatus() {
     const st = S.status;
-    if (st.upstream_online === false) chip("net", "ok", "OFFLINE ✓");
-    else if (st.upstream_online) chip("net", "warn", "ONLINE");
+    if (st.upstream_online === false) chip("net", "ok", "Offline ✓");
+    else if (st.upstream_online) chip("net", "warn", "Online");
     const m = (st.models || [])[0];
     chip("model", m ? "ok" : "", m ? m.sha256.slice(0, 10) : "none");
     $("#chip-model").title = (st.models || []).map(x => `${x.file}\n${x.sha256}`).join("\n\n") || "No model files in models/";
@@ -334,12 +355,12 @@
   // -------------------------------------------------------------- robot state
   function onState(st, stopped) {
     S.robot = st || {};
-    if (!st.connected) chip("robot", "bad", "UNREACHABLE");
-    else if (st.estop || stopped) chip("robot", "bad", "E-STOP");
-    else chip("robot", st.mode === "executing" ? "warn" : "ok", (st.mode || "?").toUpperCase());
+    if (!st.connected) chip("robot", "bad", "Not connected");
+    else if (st.estop || stopped) chip("robot", "bad", "Stopped");
+    else chip("robot", st.mode === "executing" ? "warn" : "ok", ((m0) => m0.charAt(0).toUpperCase() + m0.slice(1))(st.mode || "?"));
     const l = st.lidar_min_cm;
     if (l == null) chip("lidar", "", "n/a");
-    else chip("lidar", st.veto ? "bad" : l < 40 ? "warn" : "ok", Math.round(l) + " cm");
+    else chip("lidar", st.veto ? "bad" : l < 40 ? "warn" : "ok", Math.round(l) + " cm" + (st.veto ? " · too close" : ""));
     $("#veto").classList.toggle("hidden", !st.veto);
     $("#radar-meta").textContent = l == null ? "no lidar data" : `nearest ${Math.round(l)} cm · veto < 20 cm`;
     // Sim-obstacle button label reflects the robot's actual veto state (fix 6):
@@ -730,7 +751,10 @@
   const FROZEN_T = 0;
   function frameLoop(t) {
     const dt = REDUCED ? FROZEN_T : t;
-    try { drawOverlay(dt); drawRadar(dt); renderMiniMap(dt); } catch (e) {}
+    // Separate guards: a hidden panel (e.g. Range in Simple mode) must not stop the others drawing.
+    try { drawOverlay(dt); } catch (e) {}
+    try { drawRadar(dt); } catch (e) {}
+    try { renderMiniMap(dt); } catch (e) {}
     requestAnimationFrame(frameLoop);
   }
   requestAnimationFrame(frameLoop);
