@@ -1,0 +1,9 @@
+sudo python3 tools/hw_test.py battery //check battery level
+sudo python3 spin.py 3.0 //spins the robot for 3 secs
+sudo python3 tools/hw_test.py servo 1 500 //fully closes the claw
+sudo python3 tools/hw_test.py servo 1 2500 //fully opens the claw, can use any value between 500-2500 dont go over
+sudo python3 tools/hw_test.py backward //moves the bot backward
+sudo python3 tools/hw_test.py forward //moves the bot forward
+sudo python3 tools/hw_test.py setup //inital setup and calibration of wheels
+for ch in 3 4 5 6; do   echo "=== channel $ch ===";   sudo python3 tools/hw_test.py servo $ch 1300; sleep 1;   sudo python3 tools/hw_test.py servo $ch 1700; sleep 1; done //for loop to figure what servos are which
+//servo 1 is the claw, servo 3 is the wrist, servo 4 is the elbow, servo 5 is the shoulder, servo 6 is the base rotation. 
