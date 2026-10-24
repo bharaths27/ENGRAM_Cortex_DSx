@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#04080d">
+<title>ENGRAM Cortex</title>
+<link rel="stylesheet" href="/static/css/hud.css">
+</head>
+<body>
+<div id="fx-scan"></div>
+<div id="fx-vignette"></div>
+<div id="fx-flash"></div>
+
+<!-- ============ BOOT ============ -->
+<section id="boot">
+  <div class="boot-core">
+    <svg class="reactor" viewBox="0 0 200 200" aria-hidden="true">
+      <circle cx="100" cy="100" r="92" class="r r1"/>
+      <circle cx="100" cy="100" r="78" class="r r2"/>
+      <circle cx="100" cy="100" r="62" class="r r3"/>
+      <g class="spokes"></g>
+      <circle cx="100" cy="100" r="26" class="core"/>
+    </svg>
+    <h1 class="boot-title"><b>ENGRAM</b> <span>CORTEX</span></h1>
+    <p class="boot-sub">offline memory to action console</p>
+    <pre id="boot-log"></pre>
+    <button id="engage" class="engage" hidden>TAP TO ENGAGE</button>
+    <p class="boot-note">Nothing moves without approval.</p>
+  </div>
+</section>
+
+<!-- ============ HUD ============ -->
+<main id="hud" class="hidden">
+  <header class="topbar panel-in" style="--d:0">
+    <div class="brand">
+      <svg viewBox="0 0 48 48" class="mini-reactor" aria-hidden="true"><circle cx="24" cy="24" r="21" class="o"/><circle cx="24" cy="24" r="13.5" class="i"/><circle cx="24" cy="24" r="6.6" class="cr"/><circle cx="24" cy="24" r="5.4" class="c"/></svg>
+      <div><b>ENGRAM</b><span>CORTEX</span></div>
+    </div>
+    <div class="chips">
+      <span class="chip" id="chip-net" title="Internet connection (the demo runs without it)"><i></i><em>Internet</em><b>…</b></span>
+      <span class="chip" id="chip-link" title="Console link"><i></i><em>Link</em><b>…</b></span>
+      <span class="chip" id="chip-robot" title="Robot adapter"><i></i><em>Robot</em><b>…</b></span>
+      <span class="chip" id="chip-lidar" title="Nearest obstacle ahead"><i></i><em>Obstacle ahead</em><b>…</b></span>
+      <span class="chip" id="chip-model" title="Model SHA-256 (weights unchanged)"><i></i><em>Model</em><b>…</b></span>
+      <span class="chip warn hidden" id="chip-sim" style="display:none"><i></i><em>SIMULATOR</em><b>NOT REAL ROBOT</b></span>
+    </div>
+    <div class="top-right">
+      <a class="icon-btn back-btn" id="back-front" href="/" target="_top" title="Back to the ENGRAM Cortex home page">&larr; Home</a>
+      <button class="icon-btn" id="mode-toggle" type="button" aria-pressed="false" title="Simple view — tap for Expert">Simple</button>
+      <button class="icon-btn" id="tour-replay" type="button" title="Take the quick tour of the controls">Tour</button>
+      <button class="icon-btn" id="btn-mute" title="Voice on/off">🔊</button>
+      <button class="icon-btn" id="btn-teach" title="Teach a rule">＋ Rule</button>
+      <span id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <section class="col col-left">
+    <div class="panel cam panel-in" style="--d:1">
+      <div class="panel-h"><span>Camera</span><em id="cam-meta">— fps</em><span class="rec"><i></i>LIVE</span><button type="button" class="panel-help" data-help="cam" aria-label="What is the Camera panel?">?</button></div>
+      <div class="cam-wrap">
+        <img id="cam" alt="Robot camera">
+        <canvas id="cam-overlay"></canvas>
+        <div class="cam-corners"><i></i><i></i><i></i><i></i></div>
+        <div class="cam-sweep"></div>
+        <div class="cam-msg" id="cam-msg">ACQUIRING FEED…</div>
+        <div class="heading-tape"><div id="tape"></div><b class="caret">▼</b></div>
+      </div>
+    </div>
+
+    <div class="panel cmd panel-in" style="--d:2">
+      <div class="panel-h"><span>Tell the robot</span><em id="cmd-hint">type or hold to talk</em><button type="button" class="panel-help" data-help="cmd" aria-label="What is the Tell the robot panel?">?</button></div>
+      <form id="cmd-form" autocomplete="off">
+        <input id="cmd" placeholder="e.g. prep the bench for calibration" enterkeyhint="send" autocapitalize="off" spellcheck="false">
+        <button type="button" id="mic" class="mic" title="Hold to talk"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V22h2v-3.1A7 7 0 0 0 19 12z"/></svg><canvas id="wave"></canvas></button>
+        <button type="submit" class="send">SEND</button>
+      </form>
+      <div class="heard"><em>HEARD</em><span id="heard">—</span></div>
+      <div class="quick" id="quick">
+        <button data-cmd="what do you see">what do you see</button>
+        <button data-cmd="prep the bench for calibration">prep the bench for calibration</button>
+        <button data-cmd="bring the blue block to zone A">bring the blue block to zone A</button>
+        <button data-cmd="drive forward 20 cm">drive forward 20 cm</button>
+        <button data-cmd="turn left 90">turn left 90</button>
+        <button data-cmd="drive at full speed off the table" class="danger">unsafe test</button>
+        <button data-cmd="bring it over there" class="amb">ambiguous test</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="col col-mid">
+    <div class="panel plan panel-in" style="--d:3">
+      <div class="panel-h"><span>Plan</span><em id="plan-meta">no plan</em><button type="button" class="panel-help" data-help="plan" aria-label="What is the plan panel?">?</button></div>
+      <div id="right-now" aria-live="polite" aria-atomic="true"></div>
+      <div id="plan-body" class="plan-body">
+        <div class="empty">Tell the robot what to do. You approve every physical step before it moves.</div>
+      </div>
+      <div id="plan-actions" class="plan-actions"></div>
+    </div>
+    <div class="panel memory panel-in" style="--d:4">
+      <div class="panel-h"><span>Why: rules it found</span><em id="mem-meta">—</em><button type="button" class="panel-help" data-help="memory" aria-label="What is the Why: rules it found panel?">?</button></div>
+      <div id="mem-body" class="mem-body"><div class="empty">The facts, rules, and trace behind the plan show up here.</div></div>
+    </div>
+  </section>
+
+  <section class="col col-right">
+    <div class="panel minimap-p panel-in" style="--d:5">
+      <div class="panel-h"><span>Mini map</span><em id="minimap-meta">—</em><button type="button" class="panel-help" data-help="minimap" aria-label="What is the Mini map panel?">?</button></div>
+      <div class="minimap-wrap"><canvas id="minimap"></canvas></div>
+    </div>
+    <div class="panel radar-p panel-in" style="--d:6">
+      <div class="panel-h"><span>Range</span><em id="radar-meta">—</em><button type="button" class="panel-help" data-help="range" aria-label="What is the Range panel?">?</button></div>
+      <div class="radar-wrap"><canvas id="radar"></canvas><div class="veto-badge hidden" id="veto">VETO</div></div>
+      <div class="sim-ctl hidden" id="sim-ctl"><span>SIM</span><button id="sim-obst">drop obstacle</button></div>
+    </div>
+    <div class="panel skills panel-in" style="--d:7">
+      <div class="panel-h"><span>Things it learned</span><em id="skills-meta">0</em><button type="button" class="panel-help" data-help="skills" aria-label="What is the Things it learned panel?">?</button></div>
+      <div id="skills-body" class="skills-body"><div class="empty">Routines it picked up from past runs show up here. Nothing goes live until you say so.</div></div>
+    </div>
+    <div class="panel score panel-in" style="--d:8">
+      <div class="panel-h"><span>Timings</span><em>measured, not sampled</em><button type="button" class="panel-help" data-help="timings" aria-label="What is the Timings panel?">?</button></div>
+      <div id="score-body" class="score-body"><div class="empty">Finish a run and the real timings show up here.</div></div>
+    </div>
+    <div class="panel log panel-in" style="--d:9">
+      <div class="panel-h"><span>Activity</span><em id="log-meta">ledger</em><button type="button" class="panel-help" data-help="log" aria-label="What is the Activity panel?">?</button></div>
+      <ol id="log" class="log-body"></ol>
+    </div>
+  </section>
+
+  <button id="stop" class="stop" aria-label="Emergency stop"><span>STOP</span><small>ESC</small></button>
+  <button id="stop-clear" class="stop-clear hidden">CLEAR E-STOP</button>
+</main>
+
+<!-- ============ DRAWERS ============ -->
+<aside id="drawer" class="drawer">
+  <div class="drawer-h"><span id="drawer-title">EVIDENCE</span><button id="drawer-x">✕</button></div>
+  <div id="drawer-body" class="drawer-body"></div>
+</aside>
+<div id="scrim" class="scrim"></div>
+
+<div id="toast" class="toast"></div>
+<div id="banner" class="banner"></div>
+
+<!-- ============ FIRST-RUN TOUR (friendly-ui D6, Req 8) ============
+     A skippable 4-step coach-mark overlay pointing at the camera, the command
+     box, the approve control, and STOP. All ids/classes are new + namespaced.
+     The backdrop is pointer-events:none so it never intercepts taps on STOP
+     (which sits above it); only the card captures events (Req 8.7). -->
+<div id="tour" class="tour hidden" aria-hidden="true">
+  <div id="tour-backdrop" class="tour-backdrop"></div>
+  <div id="tour-ring" class="tour-ring" aria-hidden="true"></div>
+  <div id="tour-card" class="tour-card" role="dialog" aria-modal="false" aria-labelledby="tour-title" aria-describedby="tour-body">
+    <div class="tour-head">
+      <b id="tour-title" class="tour-title">Welcome</b>
+      <span id="tour-count" class="tour-count mono">1 of 4</span>
+    </div>
+    <p id="tour-body" class="tour-body"></p>
+    <div class="tour-actions">
+      <button type="button" id="tour-skip" class="tour-skip">Skip tour</button>
+      <button type="button" id="tour-next" class="tour-next">Next</button>
+    </div>
+  </div>
+</div>
+
+<template id="teach-tpl">
+  <form id="teach-form" class="teach">
+    <label>Rule text (from the judge, verbatim)</label>
+    <textarea id="t-text" rows="4" placeholder="Before inventory, the blue marker block must go to Zone A."></textarea>
+    <div class="row">
+      <div><label>Tag (optional)</label><input id="t-tag" inputmode="numeric" placeholder="auto"></div>
+      <div><label>Zone</label><select id="t-zone"><option value="">auto</option><option>A</option><option>B</option></select></div>
+      <div><label>Trigger words</label><input id="t-trig" placeholder="inventory"></div>
+    </div>
+    <p class="fine">Stored as a new immutable source. Older rules are superseded, never erased.</p>
+    <button type="submit" class="send wide">INGEST RULE</button>
+  </form>
+</template>
+
+<script src="/static/js/fx.js"></script>
+<script src="/static/js/voice.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
