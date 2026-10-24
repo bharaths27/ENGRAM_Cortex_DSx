@@ -1,0 +1,28 @@
+{
+  "track_width_m": 0.16,
+  "mps_at_full": 0.45,
+  "deadband": 0.25,
+  "max_duty": 0.8,
+  "left_sign": 1,
+  "right_sign": 1,
+  "left_trim": 1.0,
+  "right_trim": 1.0,
+  "turn_slip": 1.6,
+  "left_motor_ids": [
+    1,
+    3
+  ],
+  "right_motor_ids": [
+    2,
+    4
+  ],
+  "motor_signs": {
+    "1": -1,
+    "2": 1,
+    "3": -1,
+    "4": 1
+  },
+  "claw_servo_id": 1,
+  "claw_open_us": 1500,
+  "claw_closed_us": 1500
+}
