@@ -83,6 +83,7 @@ def stack(tmp_path):
         time.sleep(0.05)
     bot = RobotClient(f"http://127.0.0.1:{port}", SECRET, name="voice-test")
     whisper = FakeWhisper()
+    TestClient.bot = bot
     yield TestClient(voice_app(bot, whisper, pin="1234")), d, whisper, svc
     bot.close()
     server.should_exit = True
@@ -115,4 +116,50 @@ def test_page_state_and_camera(stack):
     assert c.get("/api/state").json()["safety"]["supervisor_alive"]
     fr = c.get("/api/frame")
     assert fr.status_code == 200 and fr.content[:2] == b"\xff\xd8"
-    assert c.get("/api/config").json() == {"pin_required": True, "speech_ready": True, "missing": []}
+    assert c.get("/api/config").json() == {"pin_required": True, "speech_ready": True, "missing": [], "mode": "direct"}
+
+
+def test_mjpeg_stream_sends_multiple_frames(stack):
+    c, *_ = stack
+    with c.stream("GET", "/api/stream?limit=3&fps=30") as r:
+        assert r.headers["content-type"].startswith("multipart/x-mixed-replace")
+        body = b"".join(r.iter_bytes())
+    assert body.count(b"--frame") == 3 and body.count(b"\xff\xd8") >= 3
+
+
+
+class FakeBrain:
+    def __init__(self):
+        self.calls = []
+
+    def command(self, text):
+        self.calls.append(("command", text))
+        return {"kind": "proposal", "operation_id": "ep_1", "status": "proposed", "digest": "d" * 64,
+                "plan": {"steps": [{"op": "turn_bounded", "args": {"degrees": 90}}]}, "check": {"errors": []}}
+
+    def approve(self, operation_id, digest):
+        self.calls.append(("approve", operation_id, digest))
+        return {"operation_id": operation_id, "outcome": "done", "failure": None}
+
+    def stop(self):
+        self.calls.append(("stop",))
+        return {"stopped": True}
+
+
+def test_brain_mode_routes_motion_through_the_brain(stack):
+    _, d, whisper, svc = stack
+    brain = FakeBrain()
+    c = TestClient(voice_app(TestClient.bot, whisper, pin="1234", brain=brain))
+    assert c.get("/api/config").json()["mode"] == "brain"
+    # direct motion is refused: one motion path for the team
+    assert c.post("/api/execute", json={"op": "turn_bounded", "args": {"angle_deg": 90}, "pin": "1234"}).status_code == 409
+    assert abs(d.pose[2]) < 0.01
+    r = c.post("/api/brain/command", json={"text": "turn left"}).json()
+    assert r["status"] == "proposed" and brain.calls == [("command", "turn left")]
+    assert c.post("/api/brain/approve", json={"operation_id": "ep_1", "digest": "d" * 64, "pin": "0000"}).status_code == 403
+    r = c.post("/api/brain/approve", json={"operation_id": "ep_1", "digest": "d" * 64, "pin": "1234"}).json()
+    assert r["outcome"] == "done" and brain.calls[-1][0] == "approve"
+    # STOP goes straight to the robot (latched) and also tells the brain
+    c.post("/api/stop")
+    assert svc.safety.estop_latched and brain.calls[-1] == ("stop",)
+    svc.reset("test")

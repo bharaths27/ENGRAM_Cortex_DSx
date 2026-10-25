@@ -62,7 +62,7 @@
 <div class="grid">
   <section class="panel">
     <img class="cam" id="cam" alt="Robot camera">
-    <p class="muted" id="cam-note">Camera refreshes every second.</p>
+    <p class="muted" id="cam-note">Camera starting…</p>
     <button class="stop" id="stop">STOP</button>
     <button class="reset hidden" id="reset">E-stop latched: tap to reset</button>
   </section>
@@ -90,7 +90,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let pin = null, pinRequired = false, recorder = null, chunks = [], pending = null;
+let pin = null, pinRequired = false, recorder = null, chunks = [], pending = null, mode = "direct", brainPlan = null;
 const NO_APPROVAL = new Set(["stop", "observe", "detect_tag"]);
 
 function speak(text) {
@@ -109,9 +109,64 @@ function getPin() {
   return pin;
 }
 
+function esc(t) { return String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function stepText(st) {
+  const op = st.op || st.action || st.name || "step";
+  const args = st.args || st.params || {};
+  const a = Object.entries(args).map(([k, v]) => `${k}=${v}`).join(", ");
+  return a ? `${op} (${a})` : op;
+}
+
+async function askBrain(text) {
+  $("proposal").classList.add("hidden");
+  $("result").textContent = "Planning from memory… (the AI can take up to a minute)";
+  let r;
+  try { r = await api("/api/brain/command", { text }); }
+  catch (e) { $("result").innerHTML = `<b class="FAILED">BRAIN</b> ${esc(e.message)}`; return; }
+  if (r.error) { $("result").innerHTML = `<b class="FAILED">BRAIN</b> ${esc(r.error)}`; return; }
+  if (r.kind === "taught") { $("result").innerHTML = `<b class="SUCCEEDED">REMEMBERED</b> ${esc(r.title || "")}`; speak("Got it, I'll remember that."); return; }
+  if (r.kind === "scheduled") { $("result").innerHTML = `<b class="SUCCEEDED">SCHEDULED</b> when ${esc(JSON.stringify(r.trigger))}: ${esc(r.request || "")}`; speak("Okay, I'll do that later."); return; }
+  if (r.status === "refused") { $("result").innerHTML = `<b class="REJECTED">REFUSED</b> ${esc(r.reason || "")}`; speak("I won't do that. " + (r.reason || "")); return; }
+  const steps = (r.plan && r.plan.steps) || [];
+  const check = r.check || {};
+  const errs = check.errors || [], warns = check.warnings || [];
+  if (r.status !== "proposed") {
+    $("result").innerHTML = `<b class="REJECTED">${esc((r.status || "?").toUpperCase())}</b> ${esc(errs.join("; "))}`;
+    speak("That plan failed the safety check."); return;
+  }
+  brainPlan = r;
+  $("p-op").textContent = `plan from ${r.source || "planner"} · ${steps.length} step(s)` + (r.planner_note ? ` · ${r.planner_note}` : "");
+  $("p-say").innerHTML = "<ol style='margin:6px 0 0 18px;padding:0'>" + steps.map(st => `<li>${esc(stepText(st))}</li>`).join("") + "</ol>"
+    + (warns.length ? `<div class="muted" style="margin-top:6px">Warnings: ${esc(warns.join("; "))}</div>` : "");
+  $("proposal").classList.remove("hidden");
+  speak(`I have a plan with ${steps.length} steps. Approve?`);
+}
+
+async function approveBrain() {
+  const r0 = brainPlan; brainPlan = null;
+  $("proposal").classList.add("hidden");
+  $("result").textContent = "Running the approved plan…";
+  try {
+    const r = await api("/api/brain/approve", { operation_id: r0.operation_id, digest: r0.digest, pin: getPin() });
+    if (r.error) throw new Error(r.error);
+    const outcome = (r.outcome || "?").toUpperCase();
+    const cls = outcome === "DONE" || outcome === "SUCCEEDED" ? "SUCCEEDED" : outcome === "UNKNOWN" ? "UNKNOWN" : "FAILED";
+    $("result").innerHTML = `<b class="${cls}">${esc(outcome)}</b> ${esc(r.failure || "")}`;
+    speak(`${outcome.toLowerCase()}. ${r.failure || ""}`);
+  } catch (e) {
+    if (String(e.message).includes("PIN")) pin = null;
+    $("result").innerHTML = `<b class="FAILED">ERROR</b> ${esc(e.message)}`;
+  }
+}
+
 function showIntent(text, intent) {
   $("heard").textContent = text ? `“${text}”` : "";
   $("result").textContent = "";
+  if (mode === "brain") {
+    if (intent.op === "stop") { doStop("voice"); return; }   // stop never waits for the AI
+    if (text && text.trim()) askBrain(text.trim()); else $("result").textContent = intent.say;
+    return;
+  }
   if (!intent.op) { $("proposal").classList.add("hidden"); $("result").textContent = intent.say; speak(intent.say); return; }
   if (intent.op === "stop") { doStop("voice"); return; }
   if (NO_APPROVAL.has(intent.op)) { run(intent); return; }
@@ -154,8 +209,8 @@ $("reset").onclick = async () => {
   try { await api("/api/reset", { operator: "ipad", pin: getPin() }); } catch (e) { alert(e.message); }
   refresh();
 };
-$("approve").onclick = () => { if (pending) run(pending); pending = null; };
-$("cancel").onclick = () => { pending = null; $("proposal").classList.add("hidden"); $("result").textContent = "Cancelled."; };
+$("approve").onclick = () => { if (mode === "brain" && brainPlan) { approveBrain(); return; } if (pending) run(pending); pending = null; };
+$("cancel").onclick = () => { pending = null; brainPlan = null; $("proposal").classList.add("hidden"); $("result").textContent = "Cancelled."; };
 $("send").onclick = async () => {
   const text = $("typed").value.trim(); if (!text) return;
   $("typed").value = "";
@@ -201,19 +256,26 @@ async function refresh() {
     $("reset").classList.toggle("hidden", !latched);
   } catch (e) { chip("chip-link", "robot offline", "bad"); }
 }
-function camLoop() {
-  const img = new Image();
-  img.onload = () => { $("cam").src = img.src; $("cam-note").textContent = "Camera refreshes every second."; setTimeout(camLoop, 1000); };
-  img.onerror = () => { $("cam-note").textContent = "Camera unavailable."; setTimeout(camLoop, 3000); };
-  img.src = "/api/frame?t=" + Date.now();
+let streamFails = 0;
+function startStream() {
+  const cam = $("cam");
+  cam.onload = () => { streamFails = 0; $("cam-note").textContent = "Live camera stream."; };
+  cam.onerror = () => {
+    streamFails++;
+    $("cam-note").textContent = streamFails > 3 ? "Camera unavailable." : "Reconnecting camera…";
+    setTimeout(startStream, Math.min(5000, 1000 * streamFails));
+  };
+  cam.src = "/api/stream?q=60&fps=20&t=" + Date.now();
 }
 (async () => {
   try {
     const c = await (await fetch("/api/config")).json();
     pinRequired = c.pin_required;
+    mode = c.mode || "direct";
+    document.querySelector("h1").textContent = mode === "brain" ? "Robot Voice · ENGRAM brain" : "Robot Voice · direct test";
     if (!c.speech_ready) $("result").textContent = "Speech not installed on the robot yet (" + c.missing.join(", ") + "). Typing still works.";
   } catch (e) {}
-  refresh(); setInterval(refresh, 2000); camLoop();
+  refresh(); setInterval(refresh, 2000); startStream();
 })();
 </script>
 </body>

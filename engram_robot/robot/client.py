@@ -90,8 +90,9 @@ class RobotClient:
     def state(self):
         return self._req("GET", "/robot/state", timeout=3)
 
-    def frame_jpeg(self, annotate=True):
-        return self._req("GET", f"/robot/frame?annotate={'true' if annotate else 'false'}", timeout=3, raw=True)
+    def frame_jpeg(self, annotate=True, quality=70):
+        return self._req("GET", f"/robot/frame?annotate={'true' if annotate else 'false'}&quality={int(quality)}",
+                         timeout=3, raw=True)
 
     def journal(self, limit=50):
         return self._req("GET", f"/robot/journal?limit={limit}")
