@@ -1,5 +1,6 @@
 """All runtime settings come from environment variables so the same code runs
 on a laptop (mocks) and on the Pi 5 (real robot + memory) with no edits."""
+import math
 import os
 from pathlib import Path
 
@@ -8,6 +9,25 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
+
+
+def _seconds(name: str, default: float, cap: float) -> float:
+    """A finite number of seconds with 0 < t <= cap; anything else (inf, nan, <= 0, too big,
+    not a number) gives the default."""
+    try:
+        t = float(_env(name, str(default)))
+    except ValueError:
+        return default
+    return t if math.isfinite(t) and 0 < t <= cap else default
+
+
+def _count(name: str, default: int, cap: int) -> int:
+    """A whole number with 0 < n <= cap; anything else gives the default."""
+    try:
+        n = int(_env(name, str(default)))
+    except ValueError:
+        return default
+    return n if 0 < n <= cap else default
 
 
 # Where Brian's robot adapter lives. "mock" = built-in simulator.
@@ -36,7 +56,13 @@ FFMPEG_BIN = _env("ENGRAM_FFMPEG_BIN", "ffmpeg")
 # http://127.0.0.1:8178. Empty = off. Loopback hosts only (127.0.0.1, localhost, ::1); any other
 # host is ignored so audio never leaves the board. Any server failure falls back to WHISPER_BIN.
 WHISPER_SERVER_URL = _env("ENGRAM_WHISPER_SERVER_URL", "")
-WHISPER_SERVER_TIMEOUT_S = float(_env("ENGRAM_WHISPER_SERVER_TIMEOUT_S", "30"))
+# One overall deadline for the whole server request (connect, upload, answer), at most 120 s.
+WHISPER_SERVER_TIMEOUT_S = _seconds("ENGRAM_WHISPER_SERVER_TIMEOUT_S", 30.0, 120.0)
+# Speech queues: past these, requests are refused as busy instead of piling up in memory.
+# Counts include the job that is running. STT also caps the audio bytes its queued jobs hold.
+STT_MAX_PENDING = _count("ENGRAM_STT_MAX_PENDING", 4, 64)
+STT_MAX_PENDING_BYTES = _count("ENGRAM_STT_MAX_PENDING_BYTES", 32 * 1024 * 1024, 1024 * 1024 * 1024)
+TTS_MAX_PENDING = _count("ENGRAM_TTS_MAX_PENDING", 8, 64)
 
 # Folder whose files are SHA-256 hashed and shown on the HUD (proves weights unchanged)
 MODELS_DIR = Path(_env("ENGRAM_MODELS_DIR", str(ROOT / "models")))

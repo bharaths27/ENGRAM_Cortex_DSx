@@ -59,15 +59,21 @@ class FakeSpeechProcs:
         self.lock = threading.Lock()
         self.upload_after_ffmpeg = None
         self.whisper_saw = None
+        self.gate = None  # threading.Event: hold every process until it is set
+        self.time_out_on = set()  # whisper-cli call numbers (1-based) that raise TimeoutExpired
 
     def __call__(self, cmd, **kwargs):
         with self.lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
         try:
+            if self.gate:
+                self.gate.wait(2)
             time.sleep(self.delay)
             tool = Path(cmd[0]).name
             self.calls.append((tool, list(cmd)))
+            if tool == "whisper-cli" and self.tools().count("whisper-cli") in self.time_out_on:
+                raise subprocess.TimeoutExpired(cmd, 40)
             if tool == "ffmpeg":
                 src, dst = Path(cmd[cmd.index("-i") + 1]), Path(cmd[-1])
                 dst.write_bytes(CONVERTED)
@@ -199,6 +205,17 @@ def whisper_server():
             mode = state["mode"]
             if mode == "slow":
                 time.sleep(1.5)
+            if mode == "trickle":  # answers, one byte every 0.1 s: no single read ever times out
+                reply = b'{"text": "late"}'.ljust(30)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(reply)))
+                self.end_headers()
+                for i in range(len(reply)):
+                    self.wfile.write(reply[i:i + 1])
+                    self.wfile.flush()
+                    time.sleep(0.1)
+                return
             if mode == "500":
                 self.send_response(500)
                 self.end_headers()
@@ -286,12 +303,15 @@ class FakeSynth:
         self.active = self.max_active = 0
         self.lock = threading.Lock()
         self.during = None  # optional hook(out) called mid-write
+        self.gate = None  # threading.Event: hold every job until it is set
 
     def __call__(self, text, out, version):
         with self.lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
         try:
+            if self.gate:
+                self.gate.wait(2)
             time.sleep(self.delay)
             self.calls.append((text, Path(out), version))
             data = wav_bytes(frames=400)
@@ -490,3 +510,176 @@ def test_probe_imports_no_robot_code(tmp_path):
     out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "[]"
+
+
+# ------------------------------------------------------------------ bounded admission (review fix 1)
+def test_stt_queue_refuses_jobs_past_the_limit(stt, monkeypatch):
+    monkeypatch.setattr(config, "STT_MAX_PENDING", 2)
+    stt.gate = threading.Event()
+
+    async def burst():
+        held = [asyncio.ensure_future(voice.transcribe(wav_bytes(), ".wav")) for _ in range(2)]
+        await asyncio.sleep(0.1)  # both admitted: one running (held), one waiting
+        third = await voice.transcribe(wav_bytes(), ".wav")  # refused at once, never queued
+        stt.gate.set()
+        return third, await asyncio.gather(*held)
+
+    third, held = run(burst())
+    assert third[0] is None and third[1].startswith("busy:") and "limit 2" in third[1]
+    assert [t for t, _ in held] == ["pick up the beaker"] * 2
+    assert stt.tools() == ["whisper-cli"] * 2
+    assert run(voice.transcribe(wav_bytes(), ".wav"))[0] == "pick up the beaker"  # slots come back
+    assert (voice._STT.jobs, voice._STT.bytes) == (0, 0)
+
+def test_a_cancelled_request_keeps_its_slot_until_its_process_exits(stt, monkeypatch):
+    monkeypatch.setattr(config, "STT_MAX_PENDING", 1)
+    stt.gate = threading.Event()
+
+    async def scenario():
+        first = asyncio.ensure_future(voice.transcribe(wav_bytes(), ".wav"))
+        await asyncio.sleep(0.1)  # running, held at the gate
+        first.cancel()  # the iPad gave up; whisper-cli is still running
+        await asyncio.sleep(0.05)
+        while_running = await voice.transcribe(wav_bytes(), ".wav")
+        stt.gate.set()
+        for _ in range(100):  # wait for the abandoned process to finish
+            if voice._STT.jobs == 0:
+                break
+            await asyncio.sleep(0.02)
+        return while_running, await voice.transcribe(wav_bytes(), ".wav")
+
+    while_running, after = run(scenario())
+    assert while_running[0] is None and while_running[1].startswith("busy:")
+    assert after[0] == "pick up the beaker"
+
+
+def test_stt_queue_caps_the_audio_it_holds(stt, monkeypatch):
+    clip = wav_bytes()
+    monkeypatch.setattr(config, "STT_MAX_PENDING", 10)
+    monkeypatch.setattr(config, "STT_MAX_PENDING_BYTES", 2 * len(clip) + len(clip) // 2)
+    stt.gate = threading.Event()
+
+    async def burst():
+        held = [asyncio.ensure_future(voice.transcribe(clip, ".wav")) for _ in range(2)]
+        await asyncio.sleep(0.1)
+        third = await voice.transcribe(clip, ".wav")  # would push the held audio past the budget
+        stt.gate.set()
+        return third, await asyncio.gather(*held)
+
+    third, held = run(burst())
+    assert third[0] is None and third[1].startswith("busy:") and "bytes" in third[1]
+    assert [t for t, _ in held] == ["pick up the beaker"] * 2
+    text, why = run(voice.transcribe(clip * 3, ".wav"))  # bigger than the whole budget on its own
+    assert text is None and why.startswith("audio too large")
+    assert stt.tools() == ["whisper-cli"] * 2
+    assert (voice._STT.jobs, voice._STT.bytes) == (0, 0)
+
+
+def test_tts_queue_refuses_jobs_past_the_limit(piper, monkeypatch):
+    monkeypatch.setattr(config, "TTS_MAX_PENDING", 1)
+    piper.synth.gate = threading.Event()
+
+    async def burst():
+        held = asyncio.ensure_future(voice.synthesize("one"))
+        await asyncio.sleep(0.1)
+        with pytest.raises(voice.VoiceBusy, match="busy"):
+            await voice.synthesize("two")
+        piper.synth.gate.set()
+        return await held
+
+    first = run(burst())
+    assert first.exists() and len(piper.synth.calls) == 1
+
+    async def cache_hit_while_full():
+        piper.synth.gate = threading.Event()
+        held = asyncio.ensure_future(voice.synthesize("three"))
+        await asyncio.sleep(0.1)
+        cached = await voice.synthesize("one")  # a cached reply is not a job; served even when full
+        piper.synth.gate.set()
+        await held
+        return cached
+
+    assert run(cache_hit_while_full()) == first
+    assert (voice._TTS.jobs, voice._TTS.bytes) == (0, 0)
+
+
+def _console_web_deps():
+    import importlib.util
+
+    return any(importlib.util.find_spec(m) for m in ("python_multipart", "multipart"))
+
+
+@pytest.mark.skipif(not _console_web_deps(), reason="python-multipart (console/requirements.txt) not installed")
+def test_busy_endpoints_answer_503(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from console.server import main
+
+    async def busy_tts(text):
+        raise voice.VoiceBusy("busy: 8 speech jobs already waiting or running (limit 8)")
+
+    async def busy_stt(audio, suffix):
+        return None, "busy: 4 speech jobs already waiting or running (limit 4)"
+
+    monkeypatch.setattr(main.voice, "synthesize", busy_tts)
+    monkeypatch.setattr(main.voice, "transcribe", busy_stt)
+    client = TestClient(main.app)
+    r = client.get("/tts", params={"text": "hello"})
+    assert r.status_code == 503 and r.json()["detail"].startswith("busy:")
+    r = client.post("/stt", files={"audio": ("a.wav", wav_bytes(), "audio/wav")}, data={"auto": "1"})
+    assert r.status_code == 503
+    assert r.json() == {"ok": False, "reason": "busy: 4 speech jobs already waiting or running (limit 4)"}
+
+
+# ------------------------------------------------------------------ server deadline (review fix 2)
+@pytest.mark.parametrize("raw,expected", [
+    ("inf", 30.0), ("-inf", 30.0), ("nan", 30.0), ("-5", 30.0), ("0", 30.0), ("1e9", 30.0),
+    ("120.5", 30.0), ("soon", 30.0), ("", 30.0), ("0.5", 0.5), ("45", 45.0), ("120", 120.0),
+])
+def test_whisper_server_timeout_is_validated(monkeypatch, raw, expected):
+    monkeypatch.setenv("ENGRAM_WHISPER_SERVER_TIMEOUT_S", raw)
+    assert config._seconds("ENGRAM_WHISPER_SERVER_TIMEOUT_S", 30.0, 120.0) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [("0", 4), ("-3", 4), ("65", 4), ("1.5", 4), ("lots", 4), ("1", 1), ("64", 64)])
+def test_queue_limits_are_validated(monkeypatch, raw, expected):
+    monkeypatch.setenv("ENGRAM_STT_MAX_PENDING", raw)
+    assert config._count("ENGRAM_STT_MAX_PENDING", 4, 64) == expected
+
+
+@pytest.mark.parametrize("bad", ["inf", "nan", "-5", "1e9"])
+def test_bad_settings_fall_back_to_defaults_at_startup(bad):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ENGRAM_")}
+    env.update(ENGRAM_WHISPER_SERVER_TIMEOUT_S=bad, ENGRAM_STT_MAX_PENDING=bad,
+               ENGRAM_STT_MAX_PENDING_BYTES=bad, ENGRAM_TTS_MAX_PENDING=bad)
+    code = ("from console.server import config as c; "
+            "print(c.WHISPER_SERVER_TIMEOUT_S, c.STT_MAX_PENDING, c.STT_MAX_PENDING_BYTES, c.TTS_MAX_PENDING)")
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == ["30.0", "4", str(32 * 1024 * 1024), "8"]
+
+
+def test_a_server_that_never_finishes_answering_hits_the_overall_deadline(stt, whisper_server, monkeypatch):
+    whisper_server["mode"] = "trickle"  # 30 bytes, one every 0.1 s: about 3 s in all
+    monkeypatch.setattr(config, "WHISPER_SERVER_URL", whisper_server["url"])
+    monkeypatch.setattr(config, "WHISPER_SERVER_TIMEOUT_S", 0.5)
+    started = time.monotonic()
+    text, why = run(voice.transcribe(wav_bytes(), ".wav"))
+    assert text == "pick up the beaker" and "no answer within 0.5 s" in why
+    assert stt.tools() == ["whisper-cli"]
+    assert time.monotonic() - started < 2.0
+
+
+# ------------------------------------------------------------------ probe keeps going (review fix 3)
+def test_probe_records_an_stt_timeout_and_keeps_going(stt, tmp_path, capsys):
+    folder = _clips(tmp_path, a=(wav_bytes(), "pick up the beaker"), b=(wav_bytes(), "pick up the beaker"),
+                    c=(wav_bytes(), None))
+    stt.time_out_on = {2}  # whisper-cli times out on the second clip
+    code = voice_probe.main([str(folder)])
+    report = json.loads(capsys.readouterr().out)
+    a, b, c = report["clips"]
+    assert a["ok"] and c["ok"] and a["transcript"] == c["transcript"] == "pick up the beaker"
+    assert not b["ok"] and b["transcript"] is None and b["wer"] is None and "TimeoutExpired" in b["reason"]
+    assert b["latency_s"] >= 0
+    assert report["summary"]["transcribed"] == 2 and report["summary"]["failed"] == 1
+    assert code == 1

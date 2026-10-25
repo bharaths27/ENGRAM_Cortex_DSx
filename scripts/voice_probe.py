@@ -8,9 +8,10 @@ Each WAV goes through console.server.voice.transcribe, the same path the console
 only when the clip is not already 16 kHz mono 16-bit PCM). Optional reference text sits next to
 the clip with the same name and .txt (clips/pick.wav -> clips/pick.txt).
 
-Per clip it records the ACTUAL transcript (null when STT failed; the reference is never used in
-its place), the word error rate against the reference when there is one, and the STT latency.
-Prints one JSON summary. Exit code 0 when every clip was transcribed, 1 otherwise.
+Per clip it records the ACTUAL transcript (null when STT failed or raised, e.g. a whisper timeout;
+the reference is never used in its place), the word error rate against the reference when there
+is one, and the STT latency. One failing clip does not stop the run. Prints one JSON summary.
+Exit code 0 when every clip was transcribed, 1 otherwise.
 """
 
 from __future__ import annotations
@@ -52,7 +53,10 @@ def probe_clip(path: Path) -> dict:
     reference = ref_path.read_text(encoding="utf-8").strip() if ref_path.exists() else None
     native = voice.is_native_pcm(path)
     started = time.perf_counter()
-    text, reason = asyncio.run(voice.transcribe(path.read_bytes(), ".wav"))
+    try:
+        text, reason = asyncio.run(voice.transcribe(path.read_bytes(), ".wav"))
+    except Exception as e:  # noqa: BLE001 - record it against this clip and go on to the next
+        text, reason = None, f"error: {type(e).__name__}: {str(e)[:200]}"
     latency = time.perf_counter() - started
     ok = text is not None
     return {"file": path.name, "transcript": text if ok else None, "ok": ok, "reason": reason,

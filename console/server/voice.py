@@ -4,7 +4,9 @@ Both are optional. If they are missing the endpoints say so and the iPad falls
 back to its own on-device speechSynthesis (works offline) and typed commands.
 
 Speech jobs run one at a time (one queue for STT, one for TTS), so a burst of requests waits
-its turn instead of starting a pile of whisper / piper processes on the Pi.
+its turn instead of starting a pile of whisper / piper processes on the Pi. Each queue admits a
+bounded number of jobs (and STT a bounded total of audio bytes); past that a request is refused
+as busy straight away, and the iPad treats busy like unavailable.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -21,10 +24,50 @@ from urllib.parse import urlsplit
 
 from . import config
 
-# One worker each = a first-in, first-out queue. A job keeps the worker until its process exits,
-# even if the request that queued it goes away, so two speech jobs of a kind never overlap.
-_STT_JOBS = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt")
-_TTS_JOBS = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts")
+
+class VoiceBusy(RuntimeError):
+    """A speech queue is full. Say so; the iPad falls back to typed commands / its own voice."""
+
+
+class _SpeechQueue:
+    """One worker, so two jobs of a kind never overlap, with bounded admission: at most
+    max_jobs() jobs waiting or running, holding at most max_bytes() of audio between them.
+    A slot is freed when its job finishes (or is cancelled before it starts), not when the
+    caller stops waiting, so the bounds count what the worker really still holds."""
+
+    def __init__(self, name: str, max_jobs, max_bytes=lambda: None) -> None:
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
+        self._lock = threading.Lock()
+        self._max_jobs, self._max_bytes = max_jobs, max_bytes
+        self.jobs = self.bytes = 0
+
+    async def run(self, fn, *args, size: int = 0):
+        with self._lock:
+            max_jobs, max_bytes = self._max_jobs(), self._max_bytes()
+            if max_bytes is not None and size > max_bytes:
+                raise VoiceBusy(f"audio too large: {size} bytes (limit {max_bytes})")
+            if self.jobs >= max_jobs:
+                raise VoiceBusy(f"busy: {self.jobs} speech jobs already waiting or running (limit {max_jobs})")
+            if max_bytes is not None and self.bytes + size > max_bytes:
+                raise VoiceBusy(f"busy: {self.bytes} bytes of audio already queued (limit {max_bytes})")
+            self.jobs += 1
+            self.bytes += size
+        try:
+            fut = self._pool.submit(fn, *args)
+        except BaseException:
+            self._release(size)
+            raise
+        fut.add_done_callback(lambda _f: self._release(size))
+        return await asyncio.wrap_future(fut)
+
+    def _release(self, size: int) -> None:
+        with self._lock:
+            self.jobs -= 1
+            self.bytes -= size
+
+
+_STT = _SpeechQueue("stt", lambda: config.STT_MAX_PENDING, lambda: config.STT_MAX_PENDING_BYTES)
+_TTS = _SpeechQueue("tts", lambda: config.TTS_MAX_PENDING)
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -114,6 +157,8 @@ def _synth_job(text: str, out: Path, version: tuple) -> bool:
 
 
 async def synthesize(text: str) -> Path | None:
+    """Path of a WAV of the words, or None when Piper is not there. Raises VoiceBusy when the
+    TTS queue is full."""
     text = text.strip()[:400]
     version = voice_version()
     if not text or version is None:
@@ -121,7 +166,7 @@ async def synthesize(text: str) -> Path | None:
     out = _tts_cache_path(text, version)
     if out.exists():
         return out
-    ok = await asyncio.get_running_loop().run_in_executor(_TTS_JOBS, _synth_job, text, out, version)
+    ok = await _TTS.run(_synth_job, text, out, version)
     return out if ok else None
 
 
@@ -155,22 +200,31 @@ def is_native_pcm(path: Path) -> bool:
 
 
 def _server_transcribe(endpoint: str, wav: Path) -> tuple[str | None, str]:
-    """POST the clip to whisper.cpp's /inference. (None, reason) on any failure."""
+    """POST the clip to whisper.cpp's /inference under ONE overall deadline, so a server that
+    accepts and then trickles or never answers cannot hold the STT worker. (None, reason) on
+    any failure; the caller then uses whisper-cli."""
+    limit = config.WHISPER_SERVER_TIMEOUT_S
     try:
-        import httpx
-
-        # trust_env=False: never send loopback audio through a proxy named in the environment.
-        # httpx does not follow redirects, so the clip cannot be bounced to another host.
-        with httpx.Client(timeout=config.WHISPER_SERVER_TIMEOUT_S, trust_env=False) as client:
-            r = client.post(endpoint, files={"file": (wav.name, wav.read_bytes(), "audio/wav")},
-                            data={"response_format": "json"})
-        r.raise_for_status()
-        text = r.json()["text"]
-        if not isinstance(text, str):
-            raise ValueError("reply has no text")
-        return text.strip(), "ok (whisper server)"
+        return asyncio.run(asyncio.wait_for(_post_clip(endpoint, wav, limit), limit))
+    except (TimeoutError, asyncio.TimeoutError):
+        return None, f"whisper server failed: no answer within {limit:g} s"
     except Exception as e:  # noqa: BLE001 - any failure means: use whisper-cli instead
         return None, f"whisper server failed: {type(e).__name__}: {str(e)[:120]}"
+
+
+async def _post_clip(endpoint: str, wav: Path, limit: float) -> tuple[str, str]:
+    import httpx
+
+    # trust_env=False: never send loopback audio through a proxy named in the environment.
+    # httpx does not follow redirects, so the clip cannot be bounced to another host.
+    async with httpx.AsyncClient(timeout=limit, trust_env=False) as client:
+        r = await client.post(endpoint, files={"file": (wav.name, wav.read_bytes(), "audio/wav")},
+                              data={"response_format": "json"})
+    r.raise_for_status()
+    text = r.json()["text"]
+    if not isinstance(text, str):
+        raise ValueError("reply has no text")
+    return text.strip(), "ok (whisper server)"
 
 
 def _transcribe_job(audio: bytes, suffix: str) -> tuple[str | None, str]:
@@ -206,4 +260,7 @@ def _transcribe_job(audio: bytes, suffix: str) -> tuple[str | None, str]:
 
 
 async def transcribe(audio: bytes, suffix: str) -> tuple[str | None, str]:
-    return await asyncio.get_running_loop().run_in_executor(_STT_JOBS, _transcribe_job, audio, suffix)
+    try:
+        return await _STT.run(_transcribe_job, audio, suffix, size=len(audio))
+    except VoiceBusy as e:
+        return None, str(e)
