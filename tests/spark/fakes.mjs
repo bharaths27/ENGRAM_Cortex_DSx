@@ -39,7 +39,7 @@ export class FakeSynth {
 export class FakeFetch {
   constructor({ honorAbort = true } = {}) { this.calls = []; this.honorAbort = honorAbort; }
   fn = (url, init = {}) => new Promise((resolve, reject) => {
-    const call = { url, signal: init.signal, resolve, reject };
+    const call = { url, signal: init.signal, body: init.body, resolve, reject };
     this.calls.push(call);
     if (this.honorAbort && init.signal) {
       init.signal.addEventListener("abort", () => {
@@ -47,8 +47,8 @@ export class FakeFetch {
       });
     }
   });
-  respond(i, { ok = true, body = "wav" } = {}) {
-    this.calls[i].resolve({ ok, status: ok ? 200 : 404, blob: async () => ({ fakeBlob: body }) });
+  respond(i, { ok = true, body = "wav", json = null } = {}) {
+    this.calls[i].resolve({ ok, status: ok ? 200 : 404, blob: async () => ({ fakeBlob: body }), json: async () => json });
   }
 }
 

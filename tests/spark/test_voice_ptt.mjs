@@ -77,18 +77,37 @@ test("speech is held while the user talks, then plays in the current turn", asyn
   assert.equal(h.audios[0].paused, false);
 });
 
-test("a reply to a turn the user already replaced is dropped", async () => {
+// Stands in for app.js runCommand: POST /commands tracked with the given turn.
+function commandRunner(V) {
+  const runs = [];
+  const settles = [];
+  const run = (text, turn) => {
+    runs.push([text, turn]);
+    return V.track(new Promise((r) => settles.push(r)), turn);
+  };
+  return { run, runs, settles };
+}
+const heard = (text) => ({ json: { ok: true, text } });
+
+test("a voice command runs in its own turn; its reply is dropped once the user barges in", async () => {
   const { V, h, stt } = loadVoice();
+  const cmd = commandRunner(V);
   await V.startRec(null);
-  V.transcribe(await V.stopRec());               // turn 1's /stt request is out
+  const turn1 = V.turn();
+  const sent = V.voiceCommand(await V.stopRec(), cmd.run);
   assert.equal(stt.calls[0].url, "/stt");
+  assert.equal(stt.calls[0].body.fields.auto, "0", "transcript only: the server must not run it");
+  stt.respond(0, heard("prep the bench"));
+  assert.equal((await sent).status, "sent");
+  assert.deepEqual(cmd.runs, [["prep the bench", turn1]]);
+
   await V.startRec(null);                        // the user barges in
   await V.stopRec();
-  V.say("turn 1's plan is ready");               // lands after the barge-in
+  V.say("turn 1's plan is ready");               // turn 1's line lands after the barge-in
   assert.equal(h.fetch.calls.length, 0);
   assert.equal(h.synth.spoken.length, 0);
 
-  stt.respond(0);                                // turn 1 is over; later lines play
+  cmd.settles[0]();                              // turn 1 is over; later lines play
   await tick();
   h.clock.t += 5000;
   V.say("turn 2's reply");
@@ -96,8 +115,28 @@ test("a reply to a turn the user already replaced is dropped", async () => {
   assert.equal(h.fetch.calls[0].url, "/tts?text=turn%202's%20reply");
 });
 
+test("a transcript that comes back after a newer press is dropped, never run", async () => {
+  const { V, h, stt } = loadVoice();
+  const cmd = commandRunner(V);
+  await V.startRec(null);                        // turn A
+  const pendingA = V.voiceCommand(await V.stopRec(), cmd.run);
+  await V.startRec(null);                        // turn B starts while A is transcribing
+  const turnB = V.turn();
+  stt.respond(0, heard("drive forward 20 cm"));  // A's transcript arrives late
+  assert.equal((await pendingA).status, "dropped");
+  assert.deepEqual(cmd.runs, [], "no /commands request for A");
+  assert.equal(h.fetch.calls.length, 0, "nothing plays");
+  assert.equal(h.synth.spoken.length, 0);
+
+  const pendingB = V.voiceCommand(await V.stopRec(), cmd.run);
+  stt.respond(1, heard("stop"));
+  assert.equal((await pendingB).status, "sent");
+  assert.deepEqual(cmd.runs, [["stop", turnB]]);
+});
+
 test("a recording still stopping when the next press lands keeps its own turn and audio", async () => {
   const { V, h, recorders, stt } = loadVoice({ autoStop: false });
+  const cmd = commandRunner(V);
   await V.startRec(null);                        // turn A
   const turnA = V.turn();
   const stoppingA = V.stopRec();                 // release A; its recorder stops later
@@ -108,17 +147,17 @@ test("a recording still stopping when the next press lands keeps its own turn an
   assert.equal(a.turn, turnA);
   assert.deepEqual([...a.blob.parts].map((p) => p.from), [0], "A's audio only");
 
-  V.transcribe(a);                               // A's /stt goes out during turn B
-  assert.equal(stt.calls.length, 1);
+  const pendingA = V.voiceCommand(a, cmd.run);   // A's upload goes out during turn B
   const stoppingB = V.stopRec();                 // release B
   recorders[1].flush();
   const b = await stoppingB;
   assert.equal(b.turn, turnB);
   assert.deepEqual([...b.blob.parts].map((p) => p.from), [1], "B's audio only");
 
-  V.say("A's plan is ready");                    // A's late line arrives after B's release
-  assert.equal(h.fetch.calls.length, 0, "A's line must not play in turn B");
-  assert.equal(h.synth.spoken.length, 0);
+  stt.respond(0, heard("bring it over there"));
+  assert.equal((await pendingA).status, "dropped");
+  assert.deepEqual(cmd.runs, []);
+  assert.equal(h.fetch.calls.length, 0);
 });
 
 test("Piper refusing to play falls back to on-device speech in the same turn", async () => {

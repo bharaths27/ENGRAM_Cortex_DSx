@@ -106,12 +106,21 @@
       r.mr.stop();
     });
   };
-  // POST a stopped recording to /stt, tagged with the turn that recorded it.
-  V.transcribe = function (a) {
+  // Transcribe a stopped recording (auto=0: transcript only, the server runs
+  // nothing) and hand the text to runCommand(text, turn) with the turn that
+  // recorded it. If a newer push-to-talk turn began while it was being
+  // transcribed, the transcript is dropped and never run.
+  // Resolves { status: "sent" | "dropped" | "unavailable", text, reason }.
+  V.voiceCommand = async function (a, runCommand) {
     const fd = new FormData();
     fd.append("audio", a.blob, "speech" + a.ext);
-    fd.append("auto", "1");
-    return V.track(fetch("/stt", { method: "POST", body: fd }), a.turn);
+    fd.append("auto", "0");
+    const r = await fetch("/stt", { method: "POST", body: fd });
+    const j = await r.json();
+    if (!j.ok) return { status: "unavailable", reason: j.reason };
+    if (a.turn !== ctl.current()) return { status: "dropped", text: j.text };
+    runCommand(j.text, a.turn);
+    return { status: "sent", text: j.text };
   };
   function drawWave(c) {
     const g = c.getContext("2d");
