@@ -20,6 +20,10 @@ class Config:
     safety_latency_s: float = 0.25
     safety_decel: float = 0.5        # m/s^2, measured braking
     veto_cone_deg: float = 30.0      # half-angle around direction of travel
+    # Slow down near obstacles instead of stopping early: when > 0, a motion that would be vetoed is
+    # slowed to the fastest speed whose envelope still fits, and only vetoed once even this speed
+    # does not fit. 0 = off (old behaviour: veto as soon as the envelope at the asked speed is hit).
+    near_min_speed: float = 0.0      # m/s, slowest speed the motors still move at
     lidar_min_valid_m: float = 0.02  # returns below this are "no return" (RPLidar reports 0)
     lidar_stale_s: float = 0.5       # no fresh scan for this long -> no motion
     lease_s: float = 0.5             # control loop must renew motion this often (watchdog)
@@ -65,6 +69,14 @@ class Config:
     def envelope(self, speed: float) -> float:
         s = abs(speed)
         return self.safety_margin_m + s * self.safety_latency_s + s * s / (2 * self.safety_decel)
+
+    def safe_speed(self, gap_m: float) -> float:
+        """Fastest speed whose envelope fits inside gap_m (inverse of envelope())."""
+        room = gap_m - self.safety_margin_m
+        if room <= 0:
+            return 0.0
+        a, lat = self.safety_decel, self.safety_latency_s
+        return a * (-lat + math.sqrt(lat * lat + 2 * room / a))
 
     @classmethod
     def load(cls, path: str | None) -> "Config":

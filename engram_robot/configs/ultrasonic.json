@@ -1,4 +1,6 @@
 {
+  "safety_margin_m": 0.05,
+  "near_min_speed": 0.02,
   "safety_latency_s": 0.35,
   "veto_cone_deg": 20,
   "lidar_min_valid_m": 0.03,
