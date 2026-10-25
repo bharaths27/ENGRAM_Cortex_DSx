@@ -407,7 +407,10 @@ async def ledger_tail(n: int = 100):
 # ------------------------------------------------------------------ voice
 @app.get("/tts")
 async def tts(text: str):
-    p = await voice.synthesize(text)
+    try:
+        p = await voice.synthesize(text)
+    except voice.VoiceBusy as e:
+        raise HTTPException(503, f"{e}; client should use speechSynthesis")
     if not p:
         raise HTTPException(404, "piper not available; client should use speechSynthesis")
     return FileResponse(p, media_type="audio/wav")
