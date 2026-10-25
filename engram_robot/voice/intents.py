@@ -52,6 +52,12 @@ def _distance_m(t: str, default_cm=20):
     return float(n)
 
 
+# Multi step arm motions in place (no driving). Each step is one normal robot server command.
+GRAB = [("gripper_open", {}), ("arm_pose", {"pose": "reach"}), ("gripper_close", {}),
+        ("arm_pose", {"pose": "carry"})]
+PUT_DOWN = [("arm_pose", {"pose": "reach"}), ("gripper_open", {}), ("arm_pose", {"pose": "home"})]
+
+
 def parse(text: str, arm_poses=()) -> dict:
     t = normalize(text)
     if not t:
@@ -68,6 +74,12 @@ def parse(text: str, arm_poses=()) -> dict:
     if m:
         return {"op": "place_at", "args": {"zone_tag_id": int(m.group(3))},
                 "say": f"Place it at zone {m.group(3)}."}
+
+    # No tag number: pick up whatever is under the claw, in place, using the saved arm poses.
+    if re.search(r"\b(pick (it |that |this )?up|pick up|grab|grab it|fetch)\b", t):
+        return {"op": "grab", "steps": GRAB, "say": "Picking it up."}
+    if re.search(r"\b(put (it |that |this )?down|put down|drop it|let go|set it down)\b", t):
+        return {"op": "put_down", "steps": PUT_DOWN, "say": "Putting it down."}
 
     m = re.search(r"\b(find|search for|look for|where is)\b.*?(\d+)", t)
     if m:
@@ -97,7 +109,8 @@ def parse(text: str, arm_poses=()) -> dict:
         d = min(_distance_m(t, 10), 0.2)  # rear is unsensed: the robot itself caps blind reverse at 0.2 m
         return {"op": "drive_bounded", "args": {"distance_m": -round(d, 3)},
                 "say": f"Back up {round(d * 100)} centimeters."}
-    if re.search(r"\b(go|move|drive|roll)\b.*\b(forward|forwards|ahead|straight)\b|\b(forward|ahead)\b", t):
+    looking = re.search(r"\b(look|see|observe|camera)\b", t) and not re.search(r"\b(go|move|drive|roll)\b", t)
+    if not looking and re.search(r"\b(go|move|drive|roll)\b.*\b(forward|forwards|ahead|straight)\b|\b(forward|ahead)\b", t):
         d = min(_distance_m(t), 1.5)
         return {"op": "drive_bounded", "args": {"distance_m": round(d, 3)},
                 "say": f"Drive forward {round(d * 100)} centimeters."}

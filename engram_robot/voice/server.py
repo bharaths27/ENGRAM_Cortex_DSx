@@ -11,10 +11,11 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from robot.client import RobotClient
@@ -67,7 +68,47 @@ class ResetReq(BaseModel):
     pin: str | None = None
 
 
-def create_app(bot: RobotClient, transcribe, pin: str | None = None) -> FastAPI:
+class BrainApproveReq(BaseModel):
+    operation_id: str
+    digest: str
+    pin: str | None = None
+
+
+class Brain:
+    """Bharath's ENGRAM brain (POST /commands, POST /operations/{id}/approve). It plans from memory,
+    checks the plan, and is the only thing that sends motion to the robot server."""
+    def __init__(self, url: str):
+        self.url = url.rstrip("/")
+
+    def _post(self, path: str, body: dict, timeout: float):
+        import json
+        import urllib.error
+        import urllib.request
+        req = urllib.request.Request(self.url + path, json.dumps(body).encode(),
+                                     {"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            try:
+                return {"error": json.loads(e.read()).get("detail", str(e)), "http": e.code}
+            except Exception:
+                return {"error": str(e), "http": e.code}
+
+    def command(self, text: str):
+        return self._post("/commands", {"text": text, "who": "voice-console"}, timeout=120)
+
+    def approve(self, operation_id: str, digest: str):
+        return self._post(f"/operations/{operation_id}/approve",
+                          {"digest": digest, "approved_by": "voice-console"}, timeout=180)
+
+    def stop(self):
+        return self._post("/stop", {}, timeout=3)
+
+
+def create_app(bot: RobotClient, transcribe, pin: str | None = None, brain: "Brain | None" = None) -> FastAPI:
+    """brain set  -> BRAIN mode (team demo): every request goes to the brain, which plans and executes.
+    brain None -> DIRECT mode (bench testing only): one allowlisted command straight to the robot server."""
     app = FastAPI(title="ENGRAM voice console")
 
     def poses():
@@ -91,7 +132,8 @@ def create_app(bot: RobotClient, transcribe, pin: str | None = None) -> FastAPI:
     @app.get("/api/config")
     def config():
         missing = transcribe.check() if hasattr(transcribe, "check") else []
-        return {"pin_required": bool(pin), "speech_ready": not missing, "missing": missing}
+        return {"pin_required": bool(pin), "speech_ready": not missing, "missing": missing,
+                "mode": "brain" if brain else "direct"}
 
     @app.post("/api/transcribe")
     def do_transcribe(audio: UploadFile = File(...)):
@@ -108,17 +150,39 @@ def create_app(bot: RobotClient, transcribe, pin: str | None = None) -> FastAPI:
     def do_parse(req: TextReq):
         return {"text": req.text, "intent": parse(req.text, poses())}
 
+    @app.post("/api/brain/command")
+    def brain_command(req: TextReq):
+        if not brain:
+            raise HTTPException(409, "brain mode is off")
+        return brain.command(req.text)
+
+    @app.post("/api/brain/approve")
+    def brain_approve(req: BrainApproveReq):
+        check_pin(req.pin)
+        if not brain:
+            raise HTTPException(409, "brain mode is off")
+        return brain.approve(req.operation_id, req.digest)
+
     @app.post("/api/execute")
     def execute(req: ExecReq):
         check_pin(req.pin)
         if req.op == "stop":
             return bot.stop(latch=True, reason="voice console STOP")
+        if brain and req.op not in NO_APPROVAL_NEEDED:
+            # one motion path for the team: the brain plans, checks and executes
+            raise HTTPException(409, "brain mode: motion goes through the brain (/api/brain/command)")
         # the robot server re-validates op and args against its allowlist and bounds
         return bot.execute(req.op, req.args, approved=req.op not in NO_APPROVAL_NEEDED)
 
     @app.post("/api/stop")
     def stop():  # no PIN: anyone at the screen can always stop the robot
-        return bot.stop(latch=True, reason="voice console STOP button")
+        out = bot.stop(latch=True, reason="voice console STOP button")  # straight to the robot: never via a model
+        if brain:
+            try:
+                brain.stop()
+            except Exception:
+                pass
+        return out
 
     @app.post("/api/reset")
     def reset(req: ResetReq):
@@ -132,10 +196,36 @@ def create_app(bot: RobotClient, transcribe, pin: str | None = None) -> FastAPI:
         except Exception as e:
             return JSONResponse({"error": f"robot unreachable: {e}"}, status_code=502)
 
+    @app.get("/api/stream")
+    def stream(q: int = 60, fps: float = 20, limit: int = 0):
+        """Continuous MJPEG stream: one long response, no per-frame round trip over the hotspot.
+        Frames are fetched from the robot server on localhost. limit>0 stops after N frames (tests)."""
+        period = 1.0 / max(1.0, min(fps, 30.0))
+        quality = max(30, min(90, q))
+
+        def gen():
+            sent = 0
+            while limit <= 0 or sent < limit:
+                t0 = time.monotonic()
+                try:
+                    jpg = bot.frame_jpeg(quality=quality)
+                except Exception:
+                    jpg = b""
+                if jpg.startswith(b"\xff\xd8"):
+                    yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode()
+                           + b"\r\n\r\n" + jpg + b"\r\n")
+                    sent += 1
+                else:
+                    time.sleep(0.5)  # camera unavailable: back off
+                time.sleep(max(0.0, period - (time.monotonic() - t0)))
+
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame",
+                                 headers={"Cache-Control": "no-store"})
+
     @app.get("/api/frame")
-    def frame():
+    def frame(q: int = 60):
         try:
-            jpg = bot.frame_jpeg()
+            jpg = bot.frame_jpeg(quality=max(30, min(90, q)))
         except Exception:
             jpg = b""
         if not jpg or not jpg.startswith(b"\xff\xd8"):
@@ -149,10 +239,13 @@ def main():
     import uvicorn
     robot_url = os.environ.get("ENGRAM_ROBOT_URL", "http://localhost:8200")
     secret = os.environ.get("ENGRAM_ROBOT_SECRET", "dev-secret-change-me")
-    bot = RobotClient(robot_url, secret, name="voice-console")
+    mode = os.environ.get("VOICE_MODE", "brain")
+    # in brain mode the brain owns motion (and its heartbeat); only direct mode drives the robot itself
+    bot = RobotClient(robot_url, secret, name="voice-console", heartbeat=(mode == "direct"))
+    brain = Brain(os.environ.get("ENGRAM_BRAIN_URL", "http://127.0.0.1:8001")) if mode == "brain" else None
     certs = HERE / "certs"
-    uvicorn.run(create_app(bot, WhisperTranscriber(), os.environ.get("VOICE_PIN") or None),
-                host=os.environ.get("VOICE_HOST", "::"), port=int(os.environ.get("VOICE_PORT", "8444")),
+    uvicorn.run(create_app(bot, WhisperTranscriber(), os.environ.get("VOICE_PIN") or None, brain),
+                host=os.environ.get("VOICE_HOST", "0.0.0.0"), port=int(os.environ.get("VOICE_PORT", "8444")),
                 ssl_keyfile=str(certs / "key.pem"), ssl_certfile=str(certs / "cert.pem"), log_level="info")
 
 
