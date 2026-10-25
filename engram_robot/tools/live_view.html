@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Robot Live View</title>
+<style>
+:root{--bg:#111;--fg:#eee;--muted:#999;--card:#1c1c1c}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px system-ui,sans-serif;padding:16px}
+input{font-size:16px;padding:8px;width:200px}button{font-size:16px;padding:8px 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:12px}
+.cam{background:var(--card);padding:8px;border-radius:8px}
+.cam h2{font-size:16px;margin:0 0 6px}
+img{display:block;width:100%;background:#000;aspect-ratio:4/3;object-fit:contain}
+.s{color:var(--muted);margin-top:6px;font-size:14px}
+</style></head><body>
+<label>Pi address <input id="ip" placeholder="127.0.0.1"></label>
+<button id="go">Start</button>
+<div class="s">Use 127.0.0.1 with the SSH tunnel open. Camera 1 comes from the robot server (port 8200), camera 2 from tools/cam_server.py (port 8201).</div>
+<div class="grid">
+ <div class="cam"><h2>Camera 1 (robot server)</h2><img id="v1" alt="camera 1"><div class="s" id="s1">Not started.</div></div>
+ <div class="cam"><h2>Camera 2</h2><img id="v2" alt="camera 2"><div class="s" id="s2">Not started.</div></div>
+</div>
+<script>
+const ip=document.getElementById('ip');
+try{ip.value=localStorage.getItem('pi')||'127.0.0.1'}catch(e){ip.value='127.0.0.1'}
+let on=false;
+function feed(img,status,path){let n=0;const t0=Date.now();
+ function next(){if(!on)return;const i=new Image();
+  i.onload=()=>{img.src=i.src;n++;status.textContent='Live, '+(n*1000/(Date.now()-t0)).toFixed(1)+' frames per second';setTimeout(next,80)};
+  i.onerror=()=>{status.textContent='No picture. Is its server running and the tunnel open for this port?';setTimeout(next,1000)};
+  i.src='http://'+ip.value.trim()+path+(path.includes('?')?'&':'?')+'t='+Date.now();}
+ next();}
+document.getElementById('go').onclick=()=>{try{localStorage.setItem('pi',ip.value.trim())}catch(e){}
+ if(on)return;on=true;
+ feed(document.getElementById('v1'),document.getElementById('s1'),':8200/robot/frame?annotate=false&quality=60');
+ feed(document.getElementById('v2'),document.getElementById('s2'),':8201/frame');};
+</script></body></html>
