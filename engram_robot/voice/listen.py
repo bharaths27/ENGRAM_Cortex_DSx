@@ -84,6 +84,7 @@ def main() -> None:
     ap.add_argument("--secret", default=os.environ.get("ENGRAM_ROBOT_SECRET", "dev-secret-change-me"))
     ap.add_argument("--window", type=int, default=4, help="seconds per listen window")
     ap.add_argument("--min-loudness", type=float, default=0.012, help="skip quieter windows as silence")
+    ap.add_argument("--dry-run", action="store_true", help="mic test: print what was heard, never move the robot")
     a = ap.parse_args()
 
     for p in (WHISPER_BIN, WHISPER_MODEL):
@@ -122,6 +123,9 @@ def main() -> None:
                 print(f"heard {text!r}  ->  (not a command)", flush=True)
                 continue
             print(f"heard {text!r}  ->  {intent['op']} {intent.get('args', {})}", flush=True)
+            if a.dry_run:
+                print("  (dry run, robot not moved)", flush=True)
+                continue
             try:
                 if intent["op"] == "stop":
                     result = bot.stop(latch=True, reason="voice: stop")
