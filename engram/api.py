@@ -10,6 +10,8 @@ Environment:
     ENGRAM_UI      folder with the built Lovable page to serve at / (optional)
     ENGRAM_ROBOT_URL  robot agent on the MasterPi, e.g. http://192.168.1.50:8100.
                       Leave unset to use the fake robot.
+    ENGRAM_ROBOT_API  masterpi (default, robot_agent on 8100) or brian (Brian's engram_robot server on 8200)
+    ENGRAM_ROBOT_KEY_FILE  for brian: file holding ENGRAM_ROBOT_SECRET, e.g. ~/engram_robot/robot.env
     ENGRAM_LLM_URL    llama.cpp server completion URL, e.g. http://127.0.0.1:8080/completion.
                       Leave unset to use the rule planner. Any model problem falls back to rules.
     ENGRAM_LLM_TIMEOUT  seconds to wait for the model (default 60; a Pi 4 is slow)
@@ -17,6 +19,7 @@ Environment:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,6 +35,7 @@ from .camera import frame_hub
 from .capabilities import describe_all
 from .db import connect
 from .engine import Engine, EngineError
+from .recall import Recall
 from .robot.mock import MockRobot
 from .skills import SkillError
 
@@ -53,6 +57,22 @@ class CommandIn(BaseModel):
     who: str = "user"
 
 
+class RecallIn(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    kinds: list[str] | None = None
+
+
+def package_info() -> dict[str, Any]:
+    """The ENGRAM boot contract the planner is given, pinned by hash (EC03/EC20)."""
+    path = ROOT / "engram/package/ENGRAM.md"
+    if not path.exists():
+        return {"loaded": False}
+    data = path.read_bytes()
+    seed = json.loads((ROOT / "engram/package/engram_seed.json").read_text())
+    return {"loaded": True, "contract": data.decode().splitlines()[0].lstrip("# ").strip(),
+            "sha256": hashlib.sha256(data).hexdigest(), "words": len(data.split()), "seed_version": seed["version"]}
+
+
 class PlanIn(BaseModel):
     request: str = Field(min_length=1, max_length=500)
 
@@ -69,6 +89,10 @@ class TagIn(BaseModel):
 
 class RestIn(BaseModel):
     zone: str = Field(default="home", min_length=1, max_length=80)
+
+
+class GotoIn(BaseModel):
+    zone: str = Field(min_length=1, max_length=80)
 
 
 class TriggerIn(BaseModel):
@@ -93,7 +117,13 @@ def default_engine() -> Engine:
     engine = Engine(connect(os.environ.get("ENGRAM_DB", "engram.db")), MockRobot(arena), set(arena["zones"]),
                     planner=planner, models_dir=os.environ.get("ENGRAM_MODELS"))
     robot_url = os.environ.get("ENGRAM_ROBOT_URL")
-    if robot_url:
+    if robot_url and os.environ.get("ENGRAM_ROBOT_API", "masterpi") == "brian":
+        from .robot.brian8200 import BrianRobot, read_secret
+
+        zone_tags = {zone: int(tag) for tag, zone in arena.get("zone_tags", {}).items()}
+        secret = read_secret(os.environ["ENGRAM_ROBOT_KEY_FILE"])
+        engine.set_robot(BrianRobot(robot_url, engine.memory, secret, zone_tags))
+    elif robot_url:
         from .robot.masterpi import MasterPiRobot
 
         engine.set_robot(MasterPiRobot(robot_url, engine.memory))
@@ -137,6 +167,19 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     def memory_facts() -> list[dict[str, Any]]:
         return engine.memory.current_facts()
 
+    @app.post("/memory/recall")
+    def memory_recall(body: RecallIn) -> dict[str, Any]:
+        try:
+            return Recall(engine.memory).recall(body.question, kinds=body.kinds)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+
+    package = package_info()
+
+    @app.get("/memory/package")
+    def memory_package() -> dict[str, Any]:
+        return package
+
     @app.post("/observations/tag")
     def observe_tag(body: TagIn) -> dict[str, Any]:
         return {"object_id": engine.memory.observe_tag(body.tag_id, body.zone)}
@@ -164,6 +207,16 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     def plan_rest(body: RestIn = RestIn()) -> dict[str, Any]:
         """Propose "return to the resting position". Still needs approval before it runs."""
         return engine.propose_rest(body.zone)
+
+    @app.post("/plan/goto")
+    def plan_goto(body: GotoIn) -> dict[str, Any]:
+        """Propose driving to a zone someone pointed at. Still needs approval before it runs."""
+        return engine.propose_goto(body.zone)
+
+    @app.get("/operations/pending")
+    def operations_pending() -> list[dict[str, Any]]:
+        """Plans waiting for approval that the iPad did not ask for (gestures, fired triggers)."""
+        return engine.pending()
 
     @app.post("/operations/{operation_id}/approve")
     def approve(operation_id: str, body: ApproveIn) -> dict[str, Any]:

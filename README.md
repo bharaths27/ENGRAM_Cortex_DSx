@@ -48,7 +48,11 @@ of each zone (home, shelf A, shelf B, PPE station, bench). An object belongs to
 the zone tag it is closest to. Mount the webcam looking straight down so every
 zone tag is in view.
 
-## The iPad page
+## The iPad page and console
+
+`console/` is Verna's operator console (web dashboard, voice, approvals), built in Kiro.
+Its Kiro specs, hooks and steering are in the root `.kiro/` folder. See `console/README.md`.
+
 
 `docs/lovable_prompt.md` is the prompt to paste into Lovable. It matches the API below.
 
@@ -73,6 +77,8 @@ request -> memory bundle (sources, objects, rules, past lessons)
 | GET | /memory/objects | Where each tagged object was last seen |
 | POST | /commands | Typed or spoken command: "remember ...", "when X, Y", or a task |
 | POST | /plan | Plan only |
+| POST | /plan/rest | Propose "return to rest" (drive home); needs approval |
+| GET | /operations/pending | Plans waiting for approval, including ones from gestures and fired triggers |
 | POST | /operations/{id}/approve | Approve the exact plan digest and run it |
 | POST | /stop | Stop now |
 | GET | /robot/state | Robot state |

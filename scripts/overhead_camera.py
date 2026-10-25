@@ -63,6 +63,8 @@ def main() -> int:
                     help="also watch hands: open palm = stop, point = select object, thumb out = propose return to rest")
     ap.add_argument("--no-palm-stop", action="store_true", help="with --gestures, show palms but don't send stop")
     ap.add_argument("--no-thumb-rest", action="store_true", help="with --gestures, show thumbs but don't propose")
+    ap.add_argument("--point-goto", action="store_true",
+                    help="with --gestures, pointing at a zone tag for 1 s proposes driving there (needs approval)")
     args = ap.parse_args()
     fps = args.fps or (15.0 if args.gestures else 5.0)
 
@@ -75,8 +77,9 @@ def main() -> int:
     if args.gestures:
         from engram.vision.gestures import GestureActions
         gestures = GestureActions(args.url, arena, fps, palm_stop=not args.no_palm_stop,
-                                  thumb_rest=not args.no_thumb_rest)
-        print("gestures on: open palm = STOP, point = select object, thumb out = propose return to rest")
+                                  thumb_rest=not args.no_thumb_rest, point_goto=args.point_goto)
+        print("gestures on: open palm = STOP, point = select object, thumb out = propose return to rest"
+              + (", point at a zone tag = propose going there" if args.point_goto else ""))
     cam = cv2.VideoCapture(args.camera)
     cam.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)

@@ -53,13 +53,17 @@ SAMPLE_RATE = 16000
 def send_command(server: str, text: str, who: str) -> dict:
     body = json.dumps({"text": text, "who": who}).encode()
     req = urllib.request.Request(server + "/commands", data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=180) as resp:  # the model on the Pi can take about a minute
         return json.loads(resp.read())
 
 
 def describe_reply(r: dict) -> tuple[str, str]:
     """(text for the screen, short sentence to say out loud)."""
     kind = r.get("kind")
+    if kind == "answer":
+        lines = [f"FROM MEMORY  {a['kind']}: {a['text']}" for a in r.get("answers", [])[:5]]
+        lines += [f"    unknown: {m}" for m in r.get("missing", [])]
+        return "\n".join(lines) or "FROM MEMORY  nothing recorded", str(r.get("reply"))
     if kind == "taught":
         n = len(r.get("rules", []))
         return f"LEARNED  saved as a source, {n} rule(s) found", f"Got it. I saved that{' and found a rule' if n else ''}."

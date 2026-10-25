@@ -54,6 +54,11 @@ the top right corner on every screen.
        `{"digest": <digest from the proposal>, "approved_by": "ipad"}`.
        Show `outcome` and each step's `status` as it returns. If `outcome` is
        `"aborted"` or `"failed"`, show `failure` in red.
+   - Every 2 seconds, also call `GET /operations/pending`. It lists plans waiting for
+     approval that the iPad did not ask for itself (a hand gesture's "return to rest",
+     or a saved future task whose trigger fired). Show each one as the same plan card,
+     labelled with `source` (for example "From a gesture"), with the same "Approve and
+     run" button using its `operation_id` and `digest`.
 
 4. Memory (middle column)
    - Objects from `GET /memory/objects`, refreshed every 2 seconds. Each object

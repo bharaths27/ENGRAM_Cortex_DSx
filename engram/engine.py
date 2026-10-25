@@ -9,6 +9,7 @@ Flow for one request:
 
 from __future__ import annotations
 
+import copy
 import json
 import sqlite3
 import time
@@ -19,10 +20,12 @@ from .checker import check_plan
 from .db import now
 from .executor import Executor
 from .hashes import hash_models
+from .heard import record_heard
 from .ids import digest, new_id
 from .memory import Memory
 from .planner import PlanResult, RulePlanner, find_zone, refusal, targets_in
-from .prospective import Prospective, parse_when
+from .prospective import Prospective, normalize, parse_when
+from .recall import Recall, is_memory_question
 from .robot.base import RobotAdapter
 from .skills import Skills
 from .teach import extract_rules
@@ -48,12 +51,24 @@ class Engine:
         self.executor = Executor(conn, robot, self.memory)
         self.models_dir = models_dir
         self.model_hashes_at_start = hash_models(models_dir)
+        # Canonical request text (normalized) -> fixed steps. See register_fixed_request().
+        self.fixed_requests: dict[str, list[dict[str, Any]]] = {}
 
     # ---- setup -----------------------------------------------------------
 
     def set_robot(self, robot: RobotAdapter) -> None:
         self.robot = robot
         self.executor.robot = robot
+
+    def register_fixed_request(self, request: str, steps: list[dict[str, Any]]) -> None:
+        """Plan this exact request (case and punctuation aside) as these steps, without a planner.
+
+        For short canonical requests the rule planner cannot plan because they name no object,
+        such as a voice preset's "Open the gripper". Only planning is skipped: propose() still
+        refuses negated or future wording, the checker must accept the steps, and a person must
+        approve the plan's digest before anything runs. Future tasks that fire use the same path.
+        """
+        self.fixed_requests[normalize(request)] = copy.deepcopy(steps)
 
     def load_arena(self, arena: dict[str, Any]) -> None:
         """Bind tagged objects from the arena file. Locations come only from observations."""
@@ -76,7 +91,12 @@ class Engine:
     # ---- commands --------------------------------------------------------
 
     def command(self, text: str, who: str = "user") -> dict[str, Any]:
-        """One entry point for typed or spoken commands."""
+        """One entry point for typed or spoken commands. What was said is kept as heard memory."""
+        result = self._command(text, who)
+        result["heard_id"] = record_heard(self.conn, text.strip(), who, result)
+        return result
+
+    def _command(self, text: str, who: str) -> dict[str, Any]:
         stripped = text.strip()
         low = stripped.lower()
         if low.startswith("remember"):
@@ -85,6 +105,9 @@ class Engine:
             if body.lower().startswith("that "):
                 body = body[5:]
             return {"kind": "taught", **self.teach(f"Spoken note from {who}", body, kind="spoken", origin=who)}
+        if is_memory_question(stripped):
+            # Answered from memory: never scheduled, never planned, nothing moves (practice check M2).
+            return {"kind": "answer", **Recall(self.memory).recall(stripped)}
         when = parse_when(stripped)
         if when:
             trigger, request = when
@@ -104,8 +127,12 @@ class Engine:
         bundle = self.memory.retrieve_memory_bundle(request, self.skills.approved_names())
         targets = targets_in(request, self.memory)
         zone = find_zone(request, self.zones)
-        skill = self.skills.find(targets, zone) if targets else None
-        if skill:
+        fixed = self.fixed_requests.get(normalize(request))
+        skill = self.skills.find(targets, zone) if targets and fixed is None else None
+        if fixed is not None:
+            plan = {"goal": request, "steps": copy.deepcopy(fixed), "evidence": [], "rules_used": []}
+            res = PlanResult(plan, planner_calls=0, source="fixed", targets=targets, zone=None)
+        elif skill:
             t0 = time.perf_counter()
             plan = {"goal": request, "steps": skill["definition"]["steps"],
                     "evidence": skill["definition"]["evidence"], "rules_used": skill["definition"]["rules_used"],
@@ -122,15 +149,15 @@ class Engine:
 
         check = check_plan(res.plan, self.memory, self.zones)
         plan_digest = digest(res.plan)
-        meta = {"targets": res.targets, "zone": res.zone, "source": res.source, "digest": plan_digest,
-                "check": check.to_dict(), "bundle": bundle.to_dict()}
+        meta = {"targets": res.targets, "zone": res.zone, "source": res.source, "planner_note": res.note,
+                "digest": plan_digest, "check": check.to_dict(), "bundle": bundle.to_dict()}
         status = "proposed" if check.ok else "rejected"
         self._episode(episode_id, request, res.plan, meta, status, None if check.ok else "; ".join(check.errors), res,
                       skill_id=skill["id"] if skill else None)
         return {
             "operation_id": episode_id, "status": status, "plan": res.plan, "digest": plan_digest,
             "check": check.to_dict(), "memory": bundle.to_dict(), "source": res.source,
-            "planner_calls": res.planner_calls, "planning_ms": round(res.planning_ms, 3),
+            "planner_note": res.note, "planner_calls": res.planner_calls, "planning_ms": round(res.planning_ms, 3),
         }
 
     def propose_fixed(self, goal: str, steps: list[dict[str, Any]], source: str) -> dict[str, Any]:
@@ -156,6 +183,12 @@ class Engine:
         When the robot adapter gets an arm rest pose, add it to capabilities.py and to these steps.
         """
         return self.propose_fixed(f"return to rest at {zone}", [{"op": "go_to_zone", "args": {"zone": zone}}],
+                                  source="gesture")
+
+    def propose_goto(self, zone: str) -> dict[str, Any]:
+        """Someone pointed at a zone tag: drive there. A proposal like any plan; the gesture
+        is never the approval. An unknown zone comes back rejected by the checker."""
+        return self.propose_fixed(f"go to {zone} (pointed at)", [{"op": "go_to_zone", "args": {"zone": zone}}],
                                   source="gesture")
 
     def _episode(self, episode_id: str, request: str, plan: dict[str, Any] | None, meta: dict[str, Any],
@@ -222,6 +255,25 @@ class Engine:
 
     def test_skill(self, skill_id: str) -> dict[str, Any]:
         return self.skills.test(skill_id, lambda p: check_plan(p, self.memory, self.zones)).to_dict()
+
+    def pending(self, max_age_s: float = 300.0) -> list[dict[str, Any]]:
+        """Plans waiting for a person's approval, newest first.
+
+        Lets the iPad show plans it did not ask for itself: a gesture's "return to rest",
+        or a future task whose trigger fired. Only recent ones, so old unapproved
+        proposals (for example from a test run) do not pile up on screen.
+        """
+        rows = self.conn.execute(
+            "SELECT id, request, plan_json, evidence_json, started_at FROM episode "
+            "WHERE outcome = 'proposed' AND started_at >= ? ORDER BY started_at DESC",
+            (now() - max_age_s,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            meta = json.loads(r["evidence_json"] or "{}")
+            out.append({"operation_id": r["id"], "request": r["request"], "plan": json.loads(r["plan_json"]),
+                        "digest": meta.get("digest"), "source": meta.get("source"), "planner_note": meta.get("planner_note", ""), "proposed_at": r["started_at"]})
+        return out
 
     def events(self, limit: int = 200) -> list[dict[str, Any]]:
         return [dict(r) for r in self.conn.execute(
