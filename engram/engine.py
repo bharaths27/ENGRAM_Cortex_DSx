@@ -168,6 +168,12 @@ class Engine:
         return self.propose_fixed(f"return to rest at {zone}", [{"op": "go_to_zone", "args": {"zone": zone}}],
                                   source="gesture")
 
+    def propose_goto(self, zone: str) -> dict[str, Any]:
+        """Someone pointed at a zone tag: drive there. A proposal like any plan; the gesture
+        is never the approval. An unknown zone comes back rejected by the checker."""
+        return self.propose_fixed(f"go to {zone} (pointed at)", [{"op": "go_to_zone", "args": {"zone": zone}}],
+                                  source="gesture")
+
     def _episode(self, episode_id: str, request: str, plan: dict[str, Any] | None, meta: dict[str, Any],
                  outcome: str, failure: str | None, res: PlanResult, skill_id: str | None = None) -> None:
         self.conn.execute(

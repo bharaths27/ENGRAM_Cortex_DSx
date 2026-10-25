@@ -89,6 +89,10 @@ class RestIn(BaseModel):
     zone: str = Field(default="home", min_length=1, max_length=80)
 
 
+class GotoIn(BaseModel):
+    zone: str = Field(min_length=1, max_length=80)
+
+
 class TriggerIn(BaseModel):
     trigger: str = Field(min_length=1, max_length=200)
 
@@ -195,6 +199,11 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     def plan_rest(body: RestIn = RestIn()) -> dict[str, Any]:
         """Propose "return to the resting position". Still needs approval before it runs."""
         return engine.propose_rest(body.zone)
+
+    @app.post("/plan/goto")
+    def plan_goto(body: GotoIn) -> dict[str, Any]:
+        """Propose driving to a zone someone pointed at. Still needs approval before it runs."""
+        return engine.propose_goto(body.zone)
 
     @app.get("/operations/pending")
     def operations_pending() -> list[dict[str, Any]]:
