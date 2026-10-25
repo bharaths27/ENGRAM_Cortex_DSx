@@ -36,6 +36,7 @@ SECRET = "voice-test-secret"
     ("spin around", "turn_bounded", {"angle_deg": 180.0}),
     ("Drive forward 30 centimeters", "drive_bounded", {"distance_m": 0.3}),
     ("move forward", "drive_bounded", {"distance_m": 0.2}),
+    ("Look, look, look forward.", "observe", {}),                     # looking must never drive
     ("go forward 5 meters", "drive_bounded", {"distance_m": 1.5}),      # clamped to the robot's limit
     ("back up", "drive_bounded", {"distance_m": -0.1}),
     ("reverse 50 cm", "drive_bounded", {"distance_m": -0.2}),           # blind reverse cap

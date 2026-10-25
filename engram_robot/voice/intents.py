@@ -97,7 +97,8 @@ def parse(text: str, arm_poses=()) -> dict:
         d = min(_distance_m(t, 10), 0.2)  # rear is unsensed: the robot itself caps blind reverse at 0.2 m
         return {"op": "drive_bounded", "args": {"distance_m": -round(d, 3)},
                 "say": f"Back up {round(d * 100)} centimeters."}
-    if re.search(r"\b(go|move|drive|roll)\b.*\b(forward|forwards|ahead|straight)\b|\b(forward|ahead)\b", t):
+    looking = re.search(r"\b(look|see|observe|camera)\b", t) and not re.search(r"\b(go|move|drive|roll)\b", t)
+    if not looking and re.search(r"\b(go|move|drive|roll)\b.*\b(forward|forwards|ahead|straight)\b|\b(forward|ahead)\b", t):
         d = min(_distance_m(t), 1.5)
         return {"op": "drive_bounded", "args": {"distance_m": round(d, 3)},
                 "say": f"Drive forward {round(d * 100)} centimeters."}
