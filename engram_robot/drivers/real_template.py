@@ -45,8 +45,11 @@ class RealDriver(RobotDriver):
                 self.cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
                 if not self.cap.isOpened():
                     raise RuntimeError(f"cannot open USB camera {camera_index} (busy or missing?)")
+                # MJPG lets USB 2 webcams deliver 30 fps at 640x480 (raw YUYV is often limited to ~10 fps)
+                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.cam_width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.cam_height)
+                self.cap.set(cv2.CAP_PROP_FPS, 30)
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception as e:  # a busy/missing camera must not stop the robot (and its e-stop) running
             self.camera_error = f"{type(e).__name__}: {e}"
