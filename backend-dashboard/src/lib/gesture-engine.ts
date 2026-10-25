@@ -60,10 +60,10 @@ function dist(a: Lm, b: Lm): number {
  * - tip is far from the palm center (extended outward even if sideways)
  */
 function fingerUp(lm: Lm[], tip: number, pip: number, mcp: number): boolean {
-  // Primary: tip above PIP joint
+  // Tip above PIP = clearly up
   if (lm[tip]!.y < lm[pip]!.y) return true;
-  // Secondary: tip far from MCP = finger sticking out
-  if (dist(lm[tip]!, lm[mcp]!) > 0.09) return true;
+  // Tip far from PIP in any direction = extended (covers sideways + toward camera)
+  if (dist(lm[tip]!, lm[pip]!) > 0.04) return true;
   return false;
 }
 
@@ -164,26 +164,40 @@ export class GestureEngine {
 
     this.debug = `T:${thumb?1:0} I:${index?1:0} M:${middle?1:0} R:${ringUp?1:0} P:${pinkyUp?1:0} = ${count}`;
 
-    // === OPEN PALM (4-5 fingers) = open claw ===
-    if (count >= 4) {
+    // Use strict checks for claw: tip clearly above or below PIP
+    const indexCurled = lm[INDEX_TIP]!.y > lm[INDEX_PIP]!.y + 0.01;
+    const middleCurled = lm[MIDDLE_TIP]!.y > lm[MIDDLE_PIP]!.y + 0.01;
+    const ringCurled = lm[RING_TIP]!.y > lm[RING_PIP]!.y + 0.01;
+    const pinkyCurled = lm[PINKY_TIP]!.y > lm[PINKY_PIP]!.y + 0.01;
+    const allCurled = indexCurled && middleCurled && ringCurled && pinkyCurled;
+    const allOpen = !indexCurled && !middleCurled && !ringCurled && !pinkyCurled;
+
+    // === OPEN PALM (all 4 fingers straight + thumb) = open claw ===
+    if (allOpen && thumb) {
       this.onGesture({ type: "gripper", openness: 1 });
       return;
     }
 
-    // === FIST (0-1 fingers, thumb doesn't count alone) = grab ===
-    if (!index && !middle && !ringUp && !pinkyUp) {
+    // === FIST (all 4 fingers curled) = grab ===
+    if (allCurled) {
+      // Thumb only sticking out = arm up/down
+      if (thumb) {
+        const up = lm[THUMB_TIP]!.y < lm[WRIST]!.y;
+        this.onGesture({ type: "arm", pose: up ? "carry" : "reach_down" });
+        return;
+      }
       this.onGesture({ type: "gripper", openness: 0 });
       return;
     }
 
-    // === THUMB ONLY (thumb out, all others down) = arm up/down ===
-    if (thumb && !index && !middle) {
+    // === THUMB ONLY (thumb out, index+middle curled) = arm up/down ===
+    if (thumb && indexCurled && middleCurled) {
       const up = lm[THUMB_TIP]!.y < lm[WRIST]!.y;
       this.onGesture({ type: "arm", pose: up ? "carry" : "reach_down" });
       return;
     }
 
-    // === TWO FINGERS (index + middle) = drive ===
+    // === TWO FINGERS (index + middle up) = DRIVE ===
     if (index && middle) {
       const tipY = (lm[INDEX_TIP]!.y + lm[MIDDLE_TIP]!.y) / 2;
       const tipX = (lm[INDEX_TIP]!.x + lm[MIDDLE_TIP]!.x) / 2;
@@ -198,7 +212,7 @@ export class GestureEngine {
       // LEFT/RIGHT first — horizontal offset from wrist
       // Raw camera is mirrored: horiz > 0 = your LEFT, horiz < 0 = your RIGHT
       if (Math.abs(horiz) > 0.06 && Math.abs(horiz) > Math.abs(vert) * 0.7) {
-        this.onGesture({ type: "drive", direction: horiz > 0 ? "left" : "right", speed: 0.6 });
+        this.onGesture({ type: "drive", direction: horiz > 0 ? "right" : "left", speed: 0.6 });
         return;
       }
 
@@ -214,13 +228,8 @@ export class GestureEngine {
         return;
       }
 
-      this.onGesture({ type: "none" });
-      return;
-    }
-
-    // === INDEX ONLY = forward ===
-    if (index && !middle) {
-      this.onGesture({ type: "drive", direction: "forward", speed: 0.4 });
+      // Pointing at camera (neither up/down nor left/right) = stop
+      this.onGesture({ type: "stop", reason: "palm" });
       return;
     }
 

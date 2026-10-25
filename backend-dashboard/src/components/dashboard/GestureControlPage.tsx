@@ -100,7 +100,7 @@ export function GestureControlPage() {
   const { gesture, landmarks, locked, lastGesture, fps } = useGesture(videoRef, cameraOn && !voiceMode);
 
   // Use Gemini to parse voice into robot commands, then execute in order
-  const GEMINI_KEY = (typeof window !== "undefined" && (window as any).__GEMINI_KEY) || import.meta.env.VITE_GEMINI_KEY || "";
+  const GEMINI_KEY = (typeof window !== "undefined" && (window as any).__GEMINI_KEY) || import.meta.env["VITE_GEMINI_KEY"] || "";
 
   type RobotCmd = { action: "drive" | "turn" | "gripper" | "stop" | "arm"; value: number; label: string };
 

@@ -305,7 +305,7 @@ def create_app(engine: Engine | None = None) -> FastAPI:
             op = "gripper_open" if v > 0.5 else "gripper_close"
             args = {}
         elif action == "arm":
-            pose = "carry" if v > 0 else "reach" if v < 0 else "home"
+            pose = "straight up" if v > 0 else "reach" if v < 0 else "home"
             op, args = "arm_pose", {"pose": pose}
         else:
             return {"ok": False}

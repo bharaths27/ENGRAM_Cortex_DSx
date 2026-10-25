@@ -465,6 +465,27 @@ export function Hero() {
       </RoverCanvas>
 
 
+      {/* Mode toggle — upper left corner */}
+      <motion.div
+        animate={{ opacity: diving ? 0 : 1 }}
+        className="absolute left-6 top-20 z-30 md:left-10"
+      >
+        <div className="flex rounded-lg border border-border bg-black/40 p-0.5 backdrop-blur-sm">
+          <button
+            onClick={() => { setMode("explore"); animateTo(0); }}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${mode === "explore" ? "bg-brand text-white" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <Box className="size-3.5" /> Explore
+          </button>
+          <button
+            onClick={() => { setMode("build"); setBuildStep(0); }}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${mode === "build" ? "bg-brand text-white" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <Layers className="size-3.5" /> Components
+          </button>
+        </div>
+      </motion.div>
+
       {/* Floating part labels (drei <Html> portal). */}
       <div ref={portal} className="pointer-events-none absolute inset-0 z-20 overflow-hidden" />
 
