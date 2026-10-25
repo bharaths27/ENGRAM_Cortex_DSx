@@ -75,6 +75,13 @@ class SafetySupervisor:
         mn = self._cone_min(direction)
         return mn < self.cfg.envelope(v), mn
 
+    def _slow_for(self, gap: float) -> float | None:
+        """Speed that still fits the envelope at this gap, or None if we must stop (or slowing is off)."""
+        if self.cfg.near_min_speed <= 0:
+            return None
+        s = self.cfg.safe_speed(gap)
+        return s if s >= self.cfg.near_min_speed else None
+
     def _stale(self) -> bool:
         return time.monotonic() - self._scan_t > self.cfg.lidar_stale_s
 
@@ -138,9 +145,12 @@ class SafetySupervisor:
                                                     f"allowed only at <= {cfg.blind_reverse_max_speed} m/s")
                     raise SafetyStop(*self.trip)
                 if blocked:
-                    self._trip_locked("E_LIDAR_VETO", f"obstacle at {mn:.3f} m inside envelope "
-                                                      f"{cfg.envelope(v):.3f} m (v={v:+.2f})")
-                    raise SafetyStop(*self.trip)
+                    slow = self._slow_for(mn)
+                    if slow is None:
+                        self._trip_locked("E_LIDAR_VETO", f"obstacle at {mn:.3f} m inside envelope "
+                                                          f"{cfg.envelope(v):.3f} m (v={v:+.2f})")
+                        raise SafetyStop(*self.trip)
+                    v = math.copysign(slow, v)
             self._cmd = (v, w)
             self._lease_until = time.monotonic() + cfg.lease_s
             self.d.set_velocity(v, w)
@@ -189,7 +199,12 @@ class SafetySupervisor:
                         if blocked and math.isnan(mn):
                             self._trip_locked("E_UNSENSED", "moving in a direction no sensor covers")
                         elif blocked:
-                            self._trip_locked("E_LIDAR_VETO", f"obstacle at {mn:.3f} m during motion")
+                            slow = self._slow_for(mn)
+                            if slow is None:
+                                self._trip_locked("E_LIDAR_VETO", f"obstacle at {mn:.3f} m during motion")
+                            else:
+                                self._cmd = (math.copysign(slow, v), w)
+                                self.d.set_velocity(*self._cmd)
                 if self.estop_latched:
                     self.d.stop()
             time.sleep(max(0.0, period - (time.monotonic() - t0)))
@@ -206,6 +221,7 @@ class SafetySupervisor:
                 "lidar_min_rear_m": _r(self._cone_min(math.pi)) if self.sensed(math.pi) else None,
                 "rear_sensed": self.sensed(math.pi),
                 "envelope_at_max_speed_m": round(self.cfg.envelope(self.cfg.max_speed), 3),
+                "closest_stop_m": round(self.cfg.envelope(self.cfg.near_min_speed or self.cfg.creep_speed), 3),
                 "brain_link": None if self._link_deadline is None else {
                     "client": self.link_client, "ok": not self._link_lost()},
                 "supervisor_alive": time.monotonic() - self._loop_t < 5.0 / self.cfg.tick_hz,

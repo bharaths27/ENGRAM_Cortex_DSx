@@ -263,6 +263,51 @@ def test_US_ultrasonic_vetoes_forward_drive_into_obstacle(make):
     assert 0.8 - 0.10 - d.pose[0] >= svc.cfg.safety_margin_m
 
 
+def test_US_slows_near_obstacle_and_stops_closer_but_never_collides(tmp_path):
+    """configs/ultrasonic.json: slow down near objects instead of stopping 15+ cm away."""
+    from robot.sim import ROBOT_RADIUS
+    cfg = Config.load(str(Path(__file__).resolve().parent.parent / "configs" / "ultrasonic.json"))
+    margin = cfg.safety_margin_m
+    cfg.safety_margin_m += ROBOT_RADIUS   # sim sensor sits at the robot centre, the real one at the front
+    d = SimDriver(cfg, obstacles=[(0.8, 0.0, 0.10)], range_sensor="ultrasonic")
+    svc = RobotService(d, cfg, SECRET, str(tmp_path / "j.jsonl"))
+    try:
+        _, r = run(svc, "drive_bounded", {"distance_m": 1.5, "speed_mps": 0.2})
+        front_gap = 0.8 - 0.10 - d.pose[0] - ROBOT_RADIUS
+        assert r["status"] == "VETOED" and not d.collided, r
+        assert front_gap >= margin - 0.01, front_gap        # still a safe stop
+        assert front_gap < 0.10, front_gap                  # but much closer than the old 0.21 m
+    finally:
+        svc.close()
+
+
+def test_sonar_filter_ignores_single_dropouts():
+    from drivers import hiwonder_sonar as hs
+
+    class FakeBus:
+        def __init__(self, seq):
+            self.seq = list(seq)
+
+        def read_word_data(self, addr, reg):
+            return self.seq.pop(0) if self.seq else 4000
+
+        def close(self):
+            pass
+
+    def run_seq(seq):
+        s = hs.HiwonderSonar.__new__(hs.HiwonderSonar)    # skip __init__: no I2C, no thread
+        s.bus, s.addr, s.errors = FakeBus(seq), hs.ADDR, 0
+        s._raw, s._good = hs.deque(maxlen=5), hs.deque(maxlen=5)
+        for _ in seq:
+            s._step()
+        return [float(s.scan()[2][0])]
+
+    assert run_seq([200, 200, 0, 200, 200])[-1] == 0.2          # one 0 mm blip: still 20 cm
+    assert run_seq([200, 200, 4000, 200, 200])[-1] == 0.2       # one lost echo: still 20 cm
+    assert run_seq([200, 0, 0, 0, 200])[-1] == 0.031            # mostly zeros: fail safe, blocked
+    assert run_seq([4000] * 5)[-1] == float("inf")              # nothing there: clear
+
+
 def test_US_rear_is_unsensed_so_reverse_is_slow_short_and_capped(make):
     svc, d = make(range_sensor="ultrasonic")
     assert svc.state()["safety"]["rear_sensed"] is False
