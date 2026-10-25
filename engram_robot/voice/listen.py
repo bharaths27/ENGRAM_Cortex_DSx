@@ -171,6 +171,11 @@ def main() -> None:
             try:
                 if intent["op"] == "stop":
                     result = bot.stop(latch=True, reason="voice: stop")
+                elif intent.get("steps"):
+                    for op, args in intent["steps"]:
+                        result = bot.execute(op, args, approved=op not in NO_APPROVAL)
+                        if result.get("status") in ("REJECTED", "FAILED"):
+                            break
                 else:
                     result = bot.execute(intent["op"], intent.get("args", {}),
                                          approved=intent["op"] not in NO_APPROVAL)
