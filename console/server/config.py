@@ -32,6 +32,11 @@ PIPER_BIN = _env("ENGRAM_PIPER_BIN", "piper")
 WHISPER_BIN = _env("ENGRAM_WHISPER_BIN", str(ROOT / "vendor" / "whisper.cpp" / "build" / "bin" / "whisper-cli"))
 WHISPER_MODEL = _env("ENGRAM_WHISPER_MODEL", str(ROOT / "models" / "ggml-tiny.en.bin"))
 FFMPEG_BIN = _env("ENGRAM_FFMPEG_BIN", "ffmpeg")
+# Optional resident whisper.cpp server (keeps the model loaded between requests), e.g.
+# http://127.0.0.1:8178. Empty = off. Loopback hosts only (127.0.0.1, localhost, ::1); any other
+# host is ignored so audio never leaves the board. Any server failure falls back to WHISPER_BIN.
+WHISPER_SERVER_URL = _env("ENGRAM_WHISPER_SERVER_URL", "")
+WHISPER_SERVER_TIMEOUT_S = float(_env("ENGRAM_WHISPER_SERVER_TIMEOUT_S", "30"))
 
 # Folder whose files are SHA-256 hashed and shown on the HUD (proves weights unchanged)
 MODELS_DIR = Path(_env("ENGRAM_MODELS_DIR", str(ROOT / "models")))
