@@ -7,6 +7,7 @@ Read-only: it never talks to the motor board. A USB camera can be open in only o
 so give it the camera the robot server is NOT using.
 """
 import argparse
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +18,9 @@ latest = {"jpg": None, "t": 0.0}
 
 
 def open_camera(device: str, width: int, height: int):
-    cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
+    # Some OpenCV builds cannot open V4L2 by path, only by number: /dev/video0 -> 0
+    m = re.fullmatch(r"(?:/dev/video)?(\d+)", device)
+    cap = cv2.VideoCapture(int(m.group(1)) if m else device, cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))  # MJPG keeps two webcams within USB bandwidth
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
