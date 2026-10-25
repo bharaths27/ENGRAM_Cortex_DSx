@@ -766,7 +766,7 @@
     FX.play("blip");
     $("#cmd").value = "";
     try {
-      const r = await api("POST", "/commands", { text, source: source || "typed" });
+      const r = await VOICE.track(api("POST", "/commands", { text, source: source || "typed" }));
       return r;
     } catch (e) { FX.toast("Command failed: " + e.message, "red"); }
   }
@@ -779,7 +779,8 @@
   async function micDown(e) {
     e.preventDefault();
     if (!VOICE.micAvailable()) { FX.toast(window.isSecureContext ? "Recording not supported here. Type instead." : "Mic needs HTTPS with the ENGRAM cert trusted. Typing still works.", "amber"); return; }
-    try { await VOICE.startRec($("#wave")); recOn = true; mic.classList.add("rec"); FX.play("rec"); VOICE.cancel(); $("#cmd-hint").textContent = "listening… release to send"; }
+    // startRec silences the robot (new speech turn) before the mic opens.
+    try { await VOICE.startRec($("#wave")); recOn = true; mic.classList.add("rec"); FX.play("rec"); $("#cmd-hint").textContent = "listening… release to send"; }
     catch (err) { FX.toast("Mic: " + err.message + ". Typing still works.", "amber"); }
   }
   async function micUp(e) {
@@ -793,7 +794,7 @@
     fd.append("audio", a.blob, "speech" + a.ext);
     fd.append("auto", "1");
     try {
-      const r = await fetch("/stt", { method: "POST", body: fd });
+      const r = await VOICE.track(fetch("/stt", { method: "POST", body: fd }));
       const j = await r.json();
       if (!j.ok) { FX.toast("Speech-to-text unavailable: type the command.", "amber"); $("#cmd-hint").textContent = "STT offline · typed works"; return; }
       $("#cmd-hint").textContent = "heard via whisper.cpp (local)";

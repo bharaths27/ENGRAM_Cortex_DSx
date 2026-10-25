@@ -1,9 +1,13 @@
 /* Voice: speaking (Piper on the Pi, else iPad on-device speechSynthesis) and
    hold-to-talk (MediaRecorder -> /stt -> whisper.cpp). Speech never blocks
-   motion: everything here is fire and forget. */
+   motion: everything here is fire and forget.
+   All playback goes through window.SPEECH (speech_epoch.mjs, set up in
+   index.html before this script runs): pressing talk starts a new turn, which
+   silences the robot at once, and a line from an older turn never plays. */
 (function () {
-  const V = { muted: false, speaking: false };
-  const q = [];
+  const V = { muted: false, speaking: false, listening: false };
+  const ctl = window.SPEECH;
+  const q = [];   // { text, epoch }
   let piperOk = true;
   let iosVoice = null;
 
@@ -15,40 +19,43 @@
   if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 
   V.say = function (text) {
-    if (V.muted || !text) return;
-    q.push(text);
+    if (V.muted || !text || V.listening) return; // the user has the floor
+    const epoch = ctl.incomingEpoch();
+    if (epoch !== ctl.current()) return;          // reply to a turn the user already replaced
+    q.push({ text, epoch });
     if (q.length > 3) q.splice(0, q.length - 3); // drop stale lines, never lag behind reality
     if (!V.speaking) next();
   };
   V.cancel = function () {
     q.length = 0;
-    try { speechSynthesis.cancel(); } catch (e) {}
-    if (V._audio) { V._audio.pause(); V._audio = null; }
+    ctl.stop();
     V.speaking = false;
   };
+  // Push-to-talk start: the robot stops talking now, before the mic opens.
+  V.newTurn = function () {
+    q.length = 0;
+    V.speaking = false;
+    return ctl.newTurn();
+  };
+  // Wrap the request a turn sends, so its late speech can be told apart.
+  V.track = (promise) => ctl.track(promise);
 
+  // A "stale" outcome means a newer turn or a stop owns the queue: do nothing.
   function next() {
-    const text = q.shift();
-    if (!text) { V.speaking = false; return; }
+    const item = q.shift();
+    if (!item) { V.speaking = false; return; }
     V.speaking = true;
     if (piperOk) {
-      const a = new Audio("/tts?text=" + encodeURIComponent(text));
-      V._audio = a;
-      let started = false;
-      a.onplaying = () => (started = true);
-      a.onended = () => next();
-      a.onerror = () => { if (!started) { piperOk = false; browserSay(text); } else next(); };
-      a.play().catch(() => { piperOk = false; browserSay(text); });
-    } else browserSay(text);
+      ctl.playUrl(item.epoch, "/tts?text=" + encodeURIComponent(item.text)).then((r) => {
+        if (r === "failed") { piperOk = false; browserSay(item); }
+        else if (r !== "stale") next();
+      });
+    } else browserSay(item);
   }
-  function browserSay(text) {
-    if (!("speechSynthesis" in window)) { next(); return; }
-    const u = new SpeechSynthesisUtterance(text);
-    if (iosVoice) u.voice = iosVoice;
-    u.rate = 1.05; u.pitch = 0.95;
-    u.onend = () => next();
-    u.onerror = () => next();
-    speechSynthesis.speak(u);
+  function browserSay(item) {
+    ctl.speakText(item.epoch, item.text, { voice: iosVoice, rate: 1.05, pitch: 0.95 }).then((r) => {
+      if (r !== "stale") next();
+    });
   }
   V.unlock = function () {
     try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch (e) {}
@@ -60,12 +67,16 @@
 
   V.startRec = async function (waveCanvas) {
     if (!V.micAvailable()) throw new Error(window.isSecureContext ? "MediaRecorder not supported" : "mic needs HTTPS (trusted cert)");
-    stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-    const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
-    rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
-    chunks = [];
-    rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-    rec.start();
+    V.newTurn();
+    V.listening = true;
+    try {
+      stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+      rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+      chunks = [];
+      rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+      rec.start();
+    } catch (err) { V.listening = false; throw err; }
     const ctx = FX.ctx();
     if (ctx && waveCanvas) {
       const src = ctx.createMediaStreamSource(stream);
@@ -75,6 +86,7 @@
     }
   };
   V.stopRec = function () {
+    V.listening = false;
     return new Promise((resolve) => {
       cancelAnimationFrame(raf);
       if (!rec) return resolve(null);
