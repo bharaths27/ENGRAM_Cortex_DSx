@@ -92,6 +92,11 @@ def main() -> None:
 
     bot = RobotClient(a.robot, secret=a.secret, name="voice")
     poses = arm_poses(bot)
+    try:
+        if bot.state().get("safety", {}).get("estop_latched"):
+            print("e-stop is latched. A helper must clear it: POST /robot/reset.", flush=True)
+    except Exception as e:
+        print(f"cannot reach robot at {a.robot}: {e}", flush=True)
     print(f"Listening on {a.mic}. Speak a command. Say 'stop' to halt. Ctrl-C to quit.", flush=True)
 
     with tempfile.TemporaryDirectory() as d:
@@ -126,7 +131,12 @@ def main() -> None:
             except Exception as e:
                 print(f"  robot error: {e}", flush=True)
                 continue
-            print(f"  {intent.get('say', '')}  [{result.get('status') or 'stopped'}]", flush=True)
+            status = result.get("status") or "stopped"
+            why = f" {result['code']}: {result.get('message', '')}" if status not in ("SUCCEEDED", "stopped") \
+                and result.get("code") else ""
+            print(f"  {intent.get('say', '')}  [{status}]{why}", flush=True)
+            if result.get("code") == "E_ESTOP":
+                print("  e-stop is latched. A helper must clear it: POST /robot/reset.", flush=True)
 
 
 if __name__ == "__main__":
