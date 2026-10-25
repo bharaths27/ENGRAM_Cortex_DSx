@@ -5,6 +5,9 @@
     python scripts/overhead_camera.py --url http://192.168.1.20:8000
     python scripts/overhead_camera.py --show --gestures  # also hand gestures (needs mediapipe)
 
+Frames are streamed to the ENGRAM server (/camera/frame) so the dashboard can show
+the table live. Turn that off with --no-push.
+
 Needs: pip install opencv-contrib-python
 Start the server first (uvicorn --factory engram.api:create_app --port 8000).
 """
@@ -29,6 +32,23 @@ def post(url: str, body: dict) -> None:
     urllib.request.urlopen(req, timeout=3).read()
 
 
+def push_frame(url: str, frame, width: int, quality: int = 70) -> None:
+    """Send one JPEG to the dashboard. Stays quiet if the server is busy or down."""
+    import cv2
+
+    h, w = frame.shape[:2]
+    if width and w > width:
+        frame = cv2.resize(frame, (width, int(h * width / w)))
+    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        return
+    try:
+        req = urllib.request.Request(f"{url}/camera/frame", buf.tobytes(), {"Content-Type": "image/jpeg"})
+        urllib.request.urlopen(req, timeout=2).read()
+    except Exception:
+        pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, default=0)
@@ -36,6 +56,9 @@ def main() -> int:
     ap.add_argument("--arena", default=str(ROOT / "fixtures/lab/arena.json"))
     ap.add_argument("--fps", type=float, default=None, help="frames per second (default 5, or 15 with --gestures)")
     ap.add_argument("--show", action="store_true", help="open a preview window")
+    ap.add_argument("--no-push", action="store_true", help="do not stream frames to the dashboard")
+    ap.add_argument("--push-fps", type=float, default=10.0, help="max frames per second sent to the dashboard")
+    ap.add_argument("--push-width", type=int, default=960, help="downscale streamed frames to this width (0 keeps full size)")
     ap.add_argument("--gestures", action="store_true",
                     help="also watch hands: open palm = stop, point = select object, thumb out = propose return to rest")
     ap.add_argument("--no-palm-stop", action="store_true", help="with --gestures, show palms but don't send stop")
@@ -60,14 +83,20 @@ def main() -> int:
     if not cam.isOpened():
         print(f"could not open camera {args.camera}; try --camera 1")
         return 1
+    push = not args.no_push
+    push_interval = 1.0 / args.push_fps if args.push_fps > 0 else 0.0
+    last_push = 0.0
     debounce = Debouncer()
-    print("watching; press Ctrl+C to stop")
+    print("watching; press Ctrl+C to stop" + ("" if not push else "; streaming to the dashboard"))
     try:
         while True:
             ok, frame = cam.read()
             if not ok:
                 time.sleep(0.2)
                 continue
+            if push and time.time() - last_push >= push_interval:
+                last_push = time.time()
+                push_frame(args.url, frame, args.push_width)
             dets = detect(frame)
             zones_now = assign_zones(dets, zone_tags)
             if gestures:

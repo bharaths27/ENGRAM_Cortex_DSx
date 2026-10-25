@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <!-- outer dashed ring (orange) -->
+  <circle cx="24" cy="24" r="21" stroke="#e8782a" stroke-width="2.2" stroke-dasharray="4.2 5.7" stroke-linecap="round"/>
+  <!-- inner broken ring (silver) -->
+  <circle cx="24" cy="24" r="13.5" stroke="#a8b2bc" stroke-width="2.2" stroke-dasharray="36 6.4" stroke-linecap="round" transform="rotate(-62 24 24)"/>
+  <!-- core ring (silver) -->
+  <circle cx="24" cy="24" r="6.6" stroke="#a8b2bc" stroke-width="1.4"/>
+  <!-- core dot (orange) -->
+  <circle cx="24" cy="24" r="5.4" fill="#e8782a"/>
+</svg>

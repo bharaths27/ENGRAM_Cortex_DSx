@@ -1,0 +1,507 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * ENGRAM Rover design system.
+ * Matches the rover itself: safety orange, brushed silver, graphite and near-black.
+ * System fonts only (the page must work fully offline). All colors are oklch tokens.
+ */
+
+@theme inline {
+  --font-sans:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-display:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+
+  --color-stage: var(--stage);
+  --color-logo-silver: var(--logo-silver);
+  --color-logo-orange: var(--logo-orange);
+  --color-stage-raised: var(--stage-raised);
+  --color-void: var(--void);
+  --color-silver: var(--silver);
+  --color-steel: var(--steel);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-glow: var(--brand-glow);
+  --color-group-base: var(--group-base);
+  --color-group-body: var(--group-body);
+  --color-group-arm: var(--group-arm);
+  --color-group-hand: var(--group-hand);
+  --color-group-sensor: var(--group-sensor);
+  --color-group-brain: var(--group-brain);
+
+  --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+  --animate-blink: blink 1s steps(1) infinite;
+}
+
+:root {
+  --radius: 0.875rem;
+
+  /* Graphite + near-black stage, brushed silver, safety orange */
+  --stage: oklch(0.165 0.005 260);
+  --stage-raised: oklch(0.205 0.006 260);
+  --void: oklch(0.06 0 0);
+  --silver: oklch(0.86 0.008 260);
+  --steel: oklch(0.55 0.01 260);
+  --brand: oklch(0.73 0.175 52);
+  --brand-deep: oklch(0.64 0.19 44);
+  --brand-soft: oklch(0.73 0.175 52 / 0.14);
+  --brand-glow: oklch(0.75 0.18 55 / 0.5);
+
+  --background: var(--stage);
+  --foreground: oklch(0.965 0.003 260);
+  --card: oklch(0.21 0.006 260 / 0.82);
+  --card-foreground: oklch(0.965 0.003 260);
+  --popover: oklch(0.2 0.006 260);
+  --popover-foreground: oklch(0.965 0.003 260);
+  --primary: var(--brand);
+  --primary-foreground: oklch(0.17 0.02 50);
+  --secondary: oklch(0.26 0.007 260);
+  --secondary-foreground: oklch(0.965 0.003 260);
+  --muted: oklch(0.24 0.006 260);
+  --muted-foreground: oklch(0.76 0.008 260);
+  --accent: var(--brand-soft);
+  --accent-foreground: oklch(0.86 0.12 60);
+  --destructive: oklch(0.65 0.2 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(1 0 0 / 0.09);
+  --input: oklch(1 0 0 / 0.14);
+  --ring: var(--brand);
+
+  /* Group hues: muted so orange stays the only true accent. */
+  --group-base: oklch(0.82 0.01 260);
+  --group-body: oklch(0.82 0.08 88);
+  --group-arm: oklch(0.72 0.07 240);
+  --group-hand: oklch(0.72 0.11 22);
+  --group-sensor: oklch(0.78 0.1 140);
+  --group-brain: oklch(0.8 0.08 205);
+
+  /* Logo colors (ENGRAM CORTEX logo): brushed silver + the rover's safety orange. */
+  --logo-silver: oklch(0.8 0.004 260);
+  --logo-orange: var(--brand);
+
+  --gradient-stage:
+    radial-gradient(ellipse 55% 55% at 30% 50%, oklch(0.4 0.09 50 / 0.28), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 85% 0%, oklch(0.42 0.01 260 / 0.35), transparent 70%),
+    linear-gradient(180deg, oklch(0.18 0.005 260), oklch(0.145 0.004 260));
+  /* Showroom backdrop (as in the team's turntable video): soft spotlight behind the rover. */
+  --gradient-showroom:
+    radial-gradient(ellipse 38% 46% at 32% 46%, oklch(0.33 0.004 260 / 0.95), transparent 72%),
+    radial-gradient(ellipse 70% 60% at 32% 50%, oklch(0.24 0.004 260), transparent 80%),
+    linear-gradient(180deg, oklch(0.17 0.003 260), oklch(0.13 0.003 260));
+  --gradient-metal: linear-gradient(
+    180deg,
+    oklch(0.99 0 0) 0%,
+    oklch(0.86 0.006 260) 45%,
+    oklch(0.62 0.01 260) 100%
+  );
+  --gradient-brand: linear-gradient(180deg, oklch(0.8 0.16 62) 0%, var(--brand) 45%, var(--brand-deep) 100%);
+  --gradient-hairline: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.18), transparent);
+  --gradient-fade-bottom: linear-gradient(to bottom, transparent, var(--stage));
+  --shadow-card:
+    0 1px 0 oklch(1 0 0 / 0.07) inset, 0 -1px 0 oklch(0 0 0 / 0.4) inset,
+    0 24px 60px -24px oklch(0 0 0 / 0.75);
+  --shadow-glow: 0 0 0 1px oklch(0.73 0.175 52 / 0.55), 0 0 36px -6px var(--brand-glow);
+  --shadow-brand:
+    0 1px 0 oklch(1 0 0 / 0.35) inset, 0 -2px 0 oklch(0 0 0 / 0.2) inset,
+    0 10px 30px -8px oklch(0.7 0.18 50 / 0.55);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: var(--brand-soft);
+    color: var(--foreground);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
+
+@layer components {
+  .bg-stage-gradient {
+    background-image: var(--gradient-stage);
+  }
+
+  .bg-showroom {
+    background-image: var(--gradient-showroom);
+  }
+
+  .bg-blueprint {
+    background-image:
+      linear-gradient(oklch(1 0 0 / 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(1 0 0 / 0.03) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse 80% 70% at 40% 50%, black, transparent 85%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 40% 50%, black, transparent 85%);
+  }
+
+  .fade-bottom {
+    background-image: var(--gradient-fade-bottom);
+  }
+
+  .hairline {
+    height: 1px;
+    background-image: var(--gradient-hairline);
+  }
+
+  /* Brushed-silver headline text */
+  .text-metal {
+    background-image: var(--gradient-metal);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .text-brand-gradient {
+    background-image: var(--gradient-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .card-stage {
+    background-color: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-2xl);
+    box-shadow: var(--shadow-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  /* 3D viewports: graphite panel. Add .hud-corners for orange corner brackets. */
+  .stage-frame {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-2xl);
+    background-color: var(--stage);
+    box-shadow: var(--shadow-card);
+  }
+  /* Decorative corner brackets retired (too "techy"); class kept as a no-op. */
+  .hud-corners::before,
+  .hud-corners::after {
+    content: none;
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    pointer-events: none;
+    z-index: 25;
+    border-color: oklch(0.73 0.175 52 / 0.7);
+  }
+  .hud-corners::before {
+    left: 12px;
+    bottom: 12px;
+    border-left: 2px solid;
+    border-bottom: 2px solid;
+    border-bottom-left-radius: 6px;
+  }
+  .hud-corners::after {
+    right: 12px;
+    bottom: 12px;
+    border-right: 2px solid;
+    border-bottom: 2px solid;
+    border-bottom-right-radius: 6px;
+  }
+
+  .glow-ring {
+    box-shadow: none;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--brand);
+  }
+  .eyebrow-line::before {
+    content: none;
+    width: 28px;
+    height: 2px;
+    border-radius: 2px;
+    background-image: var(--gradient-brand);
+  }
+
+  .spec-chip {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.65rem 0.95rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    background-color: oklch(1 0 0 / 0.035);
+  }
+
+  .btn {
+    display: inline-flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    padding: 0 1.35rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition:
+      background-color 0.2s,
+      color 0.2s,
+      border-color 0.2s,
+      box-shadow 0.2s,
+      transform 0.15s,
+      opacity 0.2s,
+      filter 0.2s;
+    user-select: none;
+  }
+  .btn:active {
+    transform: scale(0.97);
+  }
+  .btn:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  .btn-primary {
+    background-color: var(--brand);
+    color: var(--primary-foreground);
+  }
+  .btn-primary:hover {
+    filter: brightness(1.08);
+  }
+
+  .btn-ghost {
+    background-color: oklch(1 0 0 / 0.05);
+    border: 1px solid oklch(1 0 0 / 0.11);
+    color: var(--foreground);
+    box-shadow: 0 1px 0 oklch(1 0 0 / 0.06) inset;
+  }
+  .btn-ghost:hover {
+    background-color: oklch(1 0 0 / 0.09);
+    border-color: oklch(1 0 0 / 0.18);
+  }
+
+  .btn-active {
+    background-color: var(--brand-soft);
+    border-color: oklch(0.73 0.175 52 / 0.6);
+    color: var(--accent-foreground);
+  }
+
+  .btn-icon {
+    width: 48px;
+    padding: 0;
+  }
+
+  .part-row {
+    display: flex;
+    width: 100%;
+    min-height: 48px;
+    align-items: center;
+    gap: 0.75rem;
+    border-radius: var(--radius-lg);
+    padding: 0 0.875rem;
+    text-align: left;
+    color: var(--muted-foreground);
+    border: 1px solid transparent;
+    transition:
+      background-color 0.2s,
+      color 0.2s,
+      border-color 0.2s;
+  }
+  .part-row:hover {
+    background-color: oklch(1 0 0 / 0.05);
+    color: var(--foreground);
+  }
+  .part-row[data-active="true"] {
+    background-color: var(--brand-soft);
+    border-color: oklch(0.73 0.175 52 / 0.5);
+    color: var(--foreground);
+  }
+
+  /* Floating 3D part labels */
+  .label-pin {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+    min-height: 32px;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    font-size: 14px;
+    line-height: 1.2;
+    color: var(--foreground);
+    background-color: oklch(0.13 0.004 260 / 0.9);
+    border: 1px solid oklch(1 0 0 / 0.16);
+    box-shadow: 0 6px 20px -6px oklch(0 0 0 / 0.7);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    pointer-events: auto;
+    cursor: pointer;
+    animation: label-in 150ms ease-out both;
+  }
+  .label-pin:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .label-leader {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 1px;
+    transform-origin: 0 50%;
+    background-color: oklch(0.73 0.175 52 / 0.75);
+    animation: label-in 150ms ease-out both;
+  }
+  .label-anchor {
+    position: absolute;
+    left: -4px;
+    top: -4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background-color: var(--brand);
+    box-shadow: 0 0 10px var(--brand-glow);
+    animation: label-in 150ms ease-out both;
+  }
+
+  /* Range slider (t: assembled -> exploded) */
+  .range-brand {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    height: 44px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .range-brand::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      var(--brand) 0%,
+      var(--brand) var(--fill, 0%),
+      oklch(1 0 0 / 0.14) var(--fill, 0%)
+    );
+  }
+  .range-brand::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: oklch(1 0 0 / 0.14);
+  }
+  .range-brand::-moz-range-progress {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--brand);
+  }
+  .range-brand::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 24px;
+    height: 24px;
+    margin-top: -10px;
+    border-radius: 999px;
+    background: var(--gradient-metal);
+    border: 3px solid var(--brand);
+    box-shadow: 0 0 16px var(--brand-glow);
+  }
+  .range-brand::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--silver);
+    border: 3px solid var(--brand);
+  }
+
+  /* Let vertical swipes scroll the page on touch; horizontal drags and pinches
+     still reach the 3D orbit controls. Overrides the controls' inline style. */
+  .stage-canvas canvas {
+    touch-action: pan-y !important;
+  }
+}
+
+@keyframes label-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
