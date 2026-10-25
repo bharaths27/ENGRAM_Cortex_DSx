@@ -175,7 +175,7 @@ test("server speech is credited to an older turn while that turn's request is ou
   const h = makeController({ graceMs: 1000 });
   const e1 = h.ctl.newTurn();
   let settle;
-  h.ctl.track(new Promise((r) => { settle = r; }));
+  h.ctl.track(new Promise((r) => { settle = r; }), e1);
   assert.equal(h.ctl.incomingEpoch(), e1, "own request: speech is current");
 
   const e2 = h.ctl.newTurn();
@@ -187,6 +187,23 @@ test("server speech is credited to an older turn while that turn's request is ou
   h.clock.t += 600;
   assert.equal(h.ctl.incomingEpoch(), e2);
 
-  h.ctl.track(Promise.reject(new Error("network")).catch(() => {}));
+  h.ctl.track(Promise.reject(new Error("network")).catch(() => {}), e2);
   assert.equal(h.ctl.incomingEpoch(), e2, "a current-turn request never makes speech stale");
+});
+
+test("a request is credited to the turn passed in, even if sent after a newer turn began", async () => {
+  const h = makeController();
+  const a = h.ctl.newTurn();      // recording A starts
+  const b = h.ctl.newTurn();      // B is pressed before A's upload goes out
+  h.ctl.track(new Promise(() => {}), a);
+  assert.equal(h.ctl.incomingEpoch(), a, "A's late line is stale in turn B");
+  assert.notEqual(h.ctl.incomingEpoch(), b);
+});
+
+test("track() refuses a missing or unknown turn instead of guessing the current one", () => {
+  const h = makeController();
+  const e = h.ctl.newTurn();
+  assert.throws(() => h.ctl.track(Promise.resolve()), TypeError);
+  assert.throws(() => h.ctl.track(Promise.resolve(), e + 1), TypeError);
+  assert.equal(h.ctl.incomingEpoch(), e);
 });

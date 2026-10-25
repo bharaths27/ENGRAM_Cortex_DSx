@@ -147,9 +147,14 @@ export function createSpeechController(deps = {}) {
       return start(e, gen, blob);
     },
 
-    // Record a turn request (POST /stt, /commands) as sent in the current turn.
-    track(promise) {
-      const r = { epoch, settledAt: null };
+    // Record a request (POST /stt, /commands) as belonging to `turn`: the turn
+    // that produced it, captured by the caller when that turn began (a
+    // recording can finish uploading after a newer turn has started).
+    track(promise, turn) {
+      if (!Number.isInteger(turn) || turn < 0 || turn > epoch) {
+        throw new TypeError("track(promise, turn): turn must be a turn from current()/newTurn()");
+      }
+      const r = { epoch: turn, settledAt: null };
       requests.add(r);
       const settle = () => { r.settledAt = now(); };
       Promise.resolve(promise).then(settle, settle);
@@ -159,6 +164,8 @@ export function createSpeechController(deps = {}) {
     // The turn that server speech arriving now belongs to. Server speech has
     // no turn id, so while a request from an older turn is still out (or just
     // settled), credit the line to that older turn: it is stale, not ours.
+    // The graceMs window exists only for these untagged lines; requests carry
+    // their turn explicitly.
     incomingEpoch() {
       const t = now();
       let owner = epoch;

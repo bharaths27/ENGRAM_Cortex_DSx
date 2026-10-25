@@ -765,8 +765,9 @@
     if (!text) return;
     FX.play("blip");
     $("#cmd").value = "";
+    const turn = VOICE.turn();
     try {
-      const r = await VOICE.track(api("POST", "/commands", { text, source: source || "typed" }));
+      const r = await VOICE.track(api("POST", "/commands", { text, source: source || "typed" }), turn);
       return r;
     } catch (e) { FX.toast("Command failed: " + e.message, "red"); }
   }
@@ -790,11 +791,9 @@
     $("#cmd-hint").textContent = "transcribing locally…";
     const a = await VOICE.stopRec();
     if (!a || a.blob.size < 1500) { $("#cmd-hint").textContent = "too short · hold while speaking"; return; }
-    const fd = new FormData();
-    fd.append("audio", a.blob, "speech" + a.ext);
-    fd.append("auto", "1");
     try {
-      const r = await VOICE.track(fetch("/stt", { method: "POST", body: fd }));
+      // Tagged with the turn this recording started, not whatever turn is current now.
+      const r = await VOICE.transcribe(a);
       const j = await r.json();
       if (!j.ok) { FX.toast("Speech-to-text unavailable: type the command.", "amber"); $("#cmd-hint").textContent = "STT offline · typed works"; return; }
       $("#cmd-hint").textContent = "heard via whisper.cpp (local)";

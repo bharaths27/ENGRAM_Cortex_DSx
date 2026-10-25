@@ -37,8 +37,10 @@
     V.speaking = false;
     return ctl.newTurn();
   };
-  // Wrap the request a turn sends, so its late speech can be told apart.
-  V.track = (promise) => ctl.track(promise);
+  // Tag each request with the turn that produced it, so its late speech can be
+  // told apart. The turn is passed explicitly, never read when the request goes out.
+  V.turn = () => ctl.current();
+  V.track = (promise, turn) => ctl.track(promise, turn);
 
   // A "stale" outcome means a newer turn or a stop owns the queue: do nothing.
   function next() {
@@ -63,19 +65,23 @@
 
   // ---------------- microphone ----------------
   V.micAvailable = () => !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
-  let rec = null, chunks = [], stream = null, analyser = null, raf = 0;
+  // rec = { mr, chunks, turn } for the recording in progress. Each recording
+  // keeps its own chunks and turn, so a new press while the last recorder is
+  // still stopping cannot mix the two up.
+  let rec = null, stream = null, analyser = null, raf = 0;
 
   V.startRec = async function (waveCanvas) {
     if (!V.micAvailable()) throw new Error(window.isSecureContext ? "MediaRecorder not supported" : "mic needs HTTPS (trusted cert)");
-    V.newTurn();
+    const turn = V.newTurn();
     V.listening = true;
     try {
       stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
       const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
-      rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
-      chunks = [];
-      rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-      rec.start();
+      const mr = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+      const chunks = [];
+      mr.ondataavailable = e => e.data.size && chunks.push(e.data);
+      mr.start();
+      rec = { mr, chunks, turn };
     } catch (err) { V.listening = false; throw err; }
     const ctx = FX.ctx();
     if (ctx && waveCanvas) {
@@ -85,18 +91,27 @@
       drawWave(waveCanvas);
     }
   };
+  // Resolves { blob, ext, turn }: turn is the one this recording started.
   V.stopRec = function () {
     V.listening = false;
+    cancelAnimationFrame(raf);
+    const r = rec;
+    rec = null;
     return new Promise((resolve) => {
-      cancelAnimationFrame(raf);
-      if (!rec) return resolve(null);
-      rec.onstop = () => {
-        const type = rec.mimeType || "audio/mp4";
-        resolve({ blob: new Blob(chunks, { type }), ext: /mp4|aac|m4a/.test(type) ? ".m4a" : ".webm" });
-        rec = null;
+      if (!r) return resolve(null);
+      r.mr.onstop = () => {
+        const type = r.mr.mimeType || "audio/mp4";
+        resolve({ blob: new Blob(r.chunks, { type }), ext: /mp4|aac|m4a/.test(type) ? ".m4a" : ".webm", turn: r.turn });
       };
-      rec.stop();
+      r.mr.stop();
     });
+  };
+  // POST a stopped recording to /stt, tagged with the turn that recorded it.
+  V.transcribe = function (a) {
+    const fd = new FormData();
+    fd.append("audio", a.blob, "speech" + a.ext);
+    fd.append("auto", "1");
+    return V.track(fetch("/stt", { method: "POST", body: fd }), a.turn);
   };
   function drawWave(c) {
     const g = c.getContext("2d");
