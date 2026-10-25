@@ -46,9 +46,9 @@ def transcribe(wav: Path) -> str:
     return " ".join(line.strip() for line in r.stdout.splitlines() if line.strip())
 
 
-def record(mic: str, seconds: float, path: Path) -> None:
+def record(mic: str, seconds: int, path: Path) -> None:
     subprocess.run(
-        ["arecord", "-D", mic, "-f", "S16_LE", "-r", "16000", "-c", "1", "-d", str(seconds), "-q", str(path)],
+        ["arecord", "-D", mic, "-f", "S16_LE", "-r", "16000", "-c", "1", "-d", str(max(1, round(seconds))), "-q", str(path)],
         check=True, timeout=seconds + 5,
     )
 
@@ -82,7 +82,7 @@ def main() -> None:
     ap.add_argument("--mic", default=os.environ.get("ENGRAM_MIC", "plughw:CARD=C920,DEV=0"))
     ap.add_argument("--robot", default=os.environ.get("ENGRAM_ROBOT_URL", "http://localhost:8200"))
     ap.add_argument("--secret", default=os.environ.get("ENGRAM_ROBOT_SECRET", "dev-secret-change-me"))
-    ap.add_argument("--window", type=float, default=4.0, help="seconds per listen window")
+    ap.add_argument("--window", type=int, default=4, help="seconds per listen window")
     ap.add_argument("--min-loudness", type=float, default=0.012, help="skip quieter windows as silence")
     a = ap.parse_args()
 
