@@ -81,10 +81,21 @@ def test_none_choice_means_no_preset():
     {**answers(), "answers": {**answers()["answers"], "ready": {"type": "noul", "noul": 1.5}}},
     {**answers(), "answers": {**answers()["answers"], "negated": {"type": "noul", "noul": True}}},
     {**answers(), "answers": {k: v for k, v in answers()["answers"].items() if k != "future"}},
+    {**answers(), "answers": {**answers()["answers"], "preset": {"type": "choice", "choice": ["open_gripper"]}}},
+    {**answers(), "answers": {**answers()["answers"], "preset": {"type": "choice", "choice": {"a": 1}}}},
+    {**answers(), "answers": {**answers()["answers"], "preset": {"type": "choice", "choice": None}}},
 ])
 def test_malformed_replies_raise(bad):
     with pytest.raises(IntentError):
         parse_reply(bad, MODEL)
+
+
+@pytest.mark.parametrize("choice", [["open_gripper"], {"open_gripper": 1}])
+def test_unhashable_preset_choice_is_an_intent_error_not_a_crash(choice):
+    reply = answers()
+    reply["answers"]["preset"]["choice"] = choice
+    with pytest.raises(IntentError, match="preset"):
+        client(FakeTransport(reply=reply)).classify("Open the claw", True)
 
 
 def test_missing_preset_confidence_counts_as_zero():

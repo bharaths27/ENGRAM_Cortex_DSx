@@ -103,6 +103,13 @@ def test_future_qualifier_blocks_even_when_the_model_misses_it(spawn, clock):
     assert r.action == "schedule"
 
 
+def test_future_is_only_scheduled_when_the_request_is_ready(spawn, clock):
+    text = "Open the claw after calibration"
+    fake = FakeIntent({text: decision("open_gripper", ready=0.3, future=0.9)})
+    r = make_gate(fake, spawn, clock).on_final(1, 0, text)
+    assert r.action == "clarify" and r.commitment is None
+
+
 def test_model_future_flag_without_an_event_asks_to_rephrase(spawn, clock):
     fake = FakeIntent({"Open the claw in a bit": decision("open_gripper", future=0.9)})
     r = make_gate(fake, spawn, clock).on_final(1, 0, "Open the claw in a bit")
@@ -187,8 +194,50 @@ def test_answer_after_the_memory_context_changed_is_dropped(fake, spawn, clock):
     gate = make_gate(fake, spawn, clock, ctx=ctx)
     gate.on_partial(1, 0, "Open the claw")
     ctx.v += 1
+    gate.on_partial(1, 1, "Open the claw")      # the caller's thread sees the new context first
+    spawn.run_next()
+    assert gate.stats.stale_dropped == 1
+    spawn.run_all()                             # asked again under the new context
+    assert gate.prepared().key.context == 1 and len(fake.calls) == 2
+
+
+def test_answer_is_not_used_if_the_context_changed_unseen_while_it_was_out(fake, spawn, clock):
+    ctx = Ctx()
+    gate = make_gate(fake, spawn, clock, ctx=ctx)
+    gate.on_partial(1, 0, "Open the claw")
+    ctx.v += 1                                  # nobody on the caller's thread has looked yet
     spawn.run_all()
-    assert gate.stats.stale_dropped == 1 and gate.prepared() is None
+    assert gate.prepared() is None              # checked against a fresh read when used
+    r = gate.on_final(1, 1, "Open the claw")
+    assert r.action == "propose" and not r.reused and len(fake.calls) == 2
+
+
+def test_context_and_prefetch_run_only_on_the_callers_thread():
+    me = threading.get_ident()
+    seen, workers = [], []
+    fake = FakeIntent()
+
+    def classifier(text, partial):
+        workers.append(threading.get_ident())
+        return fake(text, partial)
+
+    def ctx():
+        seen.append(("context", threading.get_ident()))
+        return 0
+
+    def prefetch(text):
+        seen.append(("prefetch", threading.get_ident()))
+        return {"goal": text}
+
+    gate = SpeculationGate(classifier, prefetch=prefetch, context_version=ctx)   # real worker threads
+    for rev, text in enumerate(["Open", "Open the", "Open the claw"]):
+        gate.on_partial(1, rev, text)
+    assert gate.wait_idle(5)
+    gate.on_partial(1, 3, "Open the claw")
+    assert gate.prepared().bundle == {"goal": "Open the claw"}
+    assert gate.on_final(1, 4, "Open the claw").action == "propose"
+    assert workers and me not in workers                    # the model was asked off-thread
+    assert {kind for kind, _ in seen} == {"context", "prefetch"} and {t for _, t in seen} == {me}
 
 
 def test_answer_that_arrives_expired_is_dropped(fake, spawn, clock):
@@ -308,6 +357,51 @@ def test_stop_is_local_and_never_asks_the_model(fake, spawn, clock, text):
     assert gate.on_partial(1, 0, text).action == "stop"
     assert gate.on_final(1, 1, text).action == "stop"
     assert fake.calls == [] and spawn.jobs == []
+
+
+def test_stop_voids_a_held_request_and_rejects_the_rest_of_the_utterance():
+    fake = FakeIntent()
+    fake.hold()
+    gate = SpeculationGate(fake)
+    gate.on_partial(1, 0, "Open the claw")
+    assert fake.entered.acquire(timeout=5)                   # held in flight
+    assert gate.on_partial(1, 1, "Open the claw now").action == "queued"
+    assert gate.on_partial(1, 2, "Open the claw now, stop").action == "stop"
+    assert gate.pending is None                              # the queued partial is discarded at once
+    fake.release.set()
+    assert gate.wait_idle(5)
+    assert gate.prepared() is None and gate.stats.stale_dropped == 1
+    assert gate.on_partial(1, 3, "Open the claw").reason == "stopped"     # a later revision without "stop"
+    late = gate.on_final(1, 4, "Open the claw")
+    assert late.action == "ignored" and late.reason == "stopped"
+    assert fake.calls == [("Open the claw", True)]
+    assert gate.on_partial(2, 0, "Close the claw").action == "dispatched"   # the next utterance starts clean
+
+
+def test_stop_voids_a_stored_prediction(fake, spawn, clock):
+    gate = make_gate(fake, spawn, clock)
+    gate.on_partial(1, 0, "Open the claw")
+    spawn.run_all()
+    assert gate.prepared() is not None
+    gate.on_partial(1, 1, "Open the claw, stop")
+    assert gate.prepared() is None
+    assert gate.on_final(1, 2, "Open the claw").action == "ignored"
+    assert len(fake.calls) == 1
+
+
+def test_stop_ends_a_final_that_is_waiting_for_the_model():
+    fake = FakeIntent()
+    fake.hold()
+    gate = SpeculationGate(fake)
+    gate.on_partial(1, 0, "Open the")
+    assert fake.entered.acquire(timeout=5)
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("r", gate.on_final(1, 1, "Open the claw")))
+    t.start()
+    assert gate.on_partial(1, 2, "stop").action == "stop"
+    t.join(5)
+    fake.release.set()
+    assert out["r"].action == "ignored" and len(fake.calls) == 1
 
 
 def test_stop_wins_even_with_malformed_ids(fake, spawn, clock):

@@ -8,6 +8,10 @@
 - A deferred preset ("open the claw after calibration finishes") becomes a "When <event>,
   <task>" commitment through Engine.command, the existing prospective path. When the trigger
   fires, the engine proposes it and a person still approves it.
+
+Call on_partial and on_final from the thread that owns the engine's database connection. The
+gate's worker thread only talks to the intent model; every database read (the memory-context
+version and the memory bundle) happens on the calling thread.
 """
 
 from __future__ import annotations

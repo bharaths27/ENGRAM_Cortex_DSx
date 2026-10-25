@@ -61,6 +61,20 @@ def test_chunks_must_arrive_in_order_and_hold_whole_samples():
     assert read_wav(w.snapshot())[3] == pcm(1, 2)
 
 
+def test_empty_chunks_store_nothing_but_keep_their_sequence_number():
+    w = PcmWindow(max_seconds=0.001)
+    for i in range(10_000):
+        w.append(b"", seq=i)
+    for _ in range(10_000):
+        w.append(b"")
+    assert w._chunks == [] and w.duration_s == 0
+    w.append(pcm(1), seq=20_000)
+    with pytest.raises(OutOfOrder):
+        w.append(b"", seq=5)
+    w.append(b"", seq=20_001)
+    assert len(w._chunks) == 1 and read_wav(w.snapshot())[3] == pcm(1)
+
+
 def test_window_length_is_bounded():
     with pytest.raises(ValueError):
         PcmWindow(max_seconds=0)

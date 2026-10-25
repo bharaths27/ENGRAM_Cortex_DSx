@@ -148,13 +148,16 @@ def parse_reply(raw: Any, model: str) -> IntentDecision:
         probs[name] = p
     choice = answers.get("preset")
     allowed = set(PRESETS) | {NO_PRESET}
-    if not isinstance(choice, dict) or choice.get("type") != "choice" or choice.get("choice") not in allowed:
+    picked = choice.get("choice") if isinstance(choice, dict) else None
+    # Type first: a list or object is unhashable, and the membership test would raise TypeError.
+    if not isinstance(choice, dict) or choice.get("type") != "choice" or not isinstance(picked, str) \
+            or picked not in allowed:
         raise IntentError("malformed reply: preset")
     conf = choice.get("confidence")
     # A missing or odd confidence counts as zero, so the preset can never pass a threshold.
     if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not 0.0 <= conf <= 1.0:
         conf = 0.0
-    preset = None if choice["choice"] == NO_PRESET else choice["choice"]
+    preset = None if picked == NO_PRESET else picked
     echoed = raw.get("model")
     return IntentDecision(preset=preset, confidence=float(conf), model=echoed[:64] if isinstance(echoed, str) else model,
                           **probs)

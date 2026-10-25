@@ -1,15 +1,21 @@
 """Voice presets reach the real Engine only as unapproved proposals or future tasks."""
 
+import sqlite3
+from pathlib import Path
+
 import pytest
 
 from engram.checker import check_plan
 from engram.capabilities import CAPABILITIES
-from engram.engine import EngineError
+from engram.db import SCHEMA
+from engram.engine import Engine, EngineError
+from engram.robot.mock import MockRobot
 from engram.spark.presets import PRESETS
 from engram.spark.voice_integration import VoiceIntegration, memory_version
 from spark_fakes import FakeIntent, clock, decision, fake, spawn  # noqa: F401  (fixtures)
 
 OBSERVED_ONLY = [("observe", {})]   # the fixture's overhead scan; nothing else may reach the robot
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def count(engine, table):
@@ -113,6 +119,17 @@ def test_stop_stops_at_once_without_asking_the_model(voice, fake, spawn):
     assert count(voice.engine, "episode") == 0 and voice.engine.robot.calls == OBSERVED_ONLY
 
 
+def test_nothing_from_a_stopped_utterance_is_proposed_after_the_stop(voice, spawn):
+    voice.on_partial(1, 0, "Open the claw")
+    spawn.run_all()
+    assert voice.on_partial(1, 1, "Open the claw")["preparing"] == "open_gripper"
+    assert voice.on_partial(1, 2, "Open the claw, stop")["kind"] == "stop"
+    assert voice.engine.robot.state()["stopped"] is True
+    out = voice.on_final(1, 3, "Open the claw")
+    assert out["kind"] == "ignored"
+    assert count(voice.engine, "episode") == 0 and voice.engine.robot.calls == OBSERVED_ONLY
+
+
 def test_new_memory_between_partial_and_final_means_asking_again(voice, spawn, fake):
     voice.on_partial(1, 0, "Open the claw")
     spawn.run_all()
@@ -126,6 +143,32 @@ def test_new_memory_between_partial_and_final_means_asking_again(voice, spawn, f
 def test_not_a_preset_does_nothing(voice):
     out = voice.on_final(1, 0, "Where are the goggles?")
     assert out["kind"] == "none" and nothing_happened(voice.engine)
+
+
+def strict_engine(arena):
+    """An Engine on a connection that only its creating thread may use (sqlite3's default)."""
+    conn = sqlite3.connect(":memory:")                      # check_same_thread=True
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(SCHEMA)
+    eng = Engine(conn, MockRobot(arena), set(arena["zones"]))
+    eng.load_arena(arena)
+    eng.overhead_scan()
+    eng.teach("SOP 004", (ROOT / "fixtures/lab/SOP_004.md").read_text())
+    return eng
+
+
+def test_real_threaded_worker_never_touches_a_thread_bound_connection(arena):
+    engine = strict_engine(arena)
+    fake = FakeIntent()
+    voice = VoiceIntegration(engine, fake)                    # the default worker: real threads
+    assert voice.on_partial(1, 0, "Open the claw")["status"] == "dispatched"
+    assert voice.gate.wait_idle(5)
+    out = voice.on_partial(1, 1, "Open the claw")
+    assert out["preparing"] == "open_gripper" and out["memory"]["goal"] == "Open the claw"
+    final = voice.on_final(1, 2, "Open the claw")
+    assert final["status"] == "proposed" and final["reused_prediction"] and len(fake.calls) == 1
+    assert voice.gate.stats.errors == 0 and engine.robot.calls == OBSERVED_ONLY
 
 
 def test_presets_use_only_existing_capabilities_and_pass_the_checker(engine):

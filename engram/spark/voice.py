@@ -7,7 +7,7 @@ The SpeculationGate enforces these rules:
 2. Every prediction is bound to (utterance, revision, exact text, memory-context version) and
    an expiry. A result is kept only if, when it arrives, it still describes what the user has
    said: same utterance, same text with no change since its revision, same context, not
-   expired. Anything else is dropped.
+   expired. It is checked again, against a freshly read context, whenever it is used.
 3. At most ONE intent request is in flight. Newer partials overwrite a single pending slot
    (newest wins); there is no queue.
 4. on_final reuses a still-valid prediction whose text equals the final text, so the same
@@ -18,7 +18,14 @@ The SpeculationGate enforces these rules:
    a request to rephrase. Local word checks and the model's flags are combined, and either one
    is enough to block.
 6. STOP words are detected locally and returned at once, for partials and finals, without
-   asking the intent model. A false stop is safe; a missed one is not.
+   asking the intent model. A false stop is safe; a missed one is not. A stop also voids all
+   speculation: the prediction, the pending partial and any answer still in flight are
+   discarded, and the utterance it was heard in (or the current one, if newer) accepts no
+   further partials or finals. The next utterance starts clean.
+7. Threads: the worker thread only calls the classifier and the clock. context_version and
+   prefetch are called only on the thread that calls on_partial, on_final or prepared, so a
+   database connection bound to that thread (sqlite3's default) is safe. The memory bundle
+   for a ready prediction is fetched there too: on the next partial, prepared() or the final.
 
 Utterance ids and revisions are integers that only grow. Revision numbers are per utterance.
 """
@@ -65,7 +72,7 @@ class Thresholds:
     """
 
     preset: float = 0.6     # minimum confidence in the chosen preset
-    ready: float = 0.6      # minimum P(complete enough to act on)
+    ready: float = 0.6      # minimum P(complete enough to act on); also needed to schedule
     directed: float = 0.5   # minimum P(addressed to the robot)
     block: float = 0.35     # P(negated | future | correction) at or above this blocks immediate action
 
@@ -93,8 +100,8 @@ class GateResult:
     # partial: stop | ignored | dispatched | queued | unchanged
     # final:   stop | ignored | propose | schedule | clarify | none
     action: str
-    utterance: int
-    revision: int
+    utterance: Any
+    revision: Any
     text: str
     preset: str | None = None
     reason: str = ""
@@ -112,15 +119,20 @@ class GateStats:
     expired: int = 0         # predictions too old to reuse
     reused: int = 0          # finals answered by a prediction, with no new request
     errors: int = 0          # intent requests that failed
+    stops: int = 0           # stop words heard
 
 
 def _clean(text: str) -> str:
     return " ".join(str(text).split())
 
 
+def _valid_id(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
 def _check_ids(utterance: int, revision: int) -> None:
     for name, v in (("utterance", utterance), ("revision", revision)):
-        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        if not _valid_id(v):
             raise ValueError(f"{name} must be a non-negative int")
 
 
@@ -163,6 +175,8 @@ class SpeculationGate:
         self._text = ""
         self._text_since = -1          # revision at which the current text first appeared
         self._final = False
+        self._stopped_utt: int | None = None   # utterances up to this id were stopped
+        self._ctx_now: Hashable = None         # context version last read on the caller's thread
         self._in_flight: Key | None = None
         self._pending: tuple[int, int, str] | None = None
         self._pred: Prediction | None = None
@@ -182,6 +196,8 @@ class SpeculationGate:
 
     def prepared(self) -> Prediction | None:
         """The preset being prepared for what the user has said so far, if any. Never a permission."""
+        self._read_context()
+        self._attach_bundle()
         with self._cv:
             p = self._pred
             if p and self._valid(p.key) and self._actionable(p.key.text, p.decision):
@@ -203,27 +219,36 @@ class SpeculationGate:
     def on_partial(self, utterance: int, revision: int, text: str) -> GateResult:
         text = _clean(text)
         if is_stop(text):  # before any bookkeeping, so nothing can get in the way of a stop
+            self._latch_stop(utterance)
             return GateResult("stop", utterance, revision, text, reason="stop word heard")
         _check_ids(utterance, revision)
+        ctx = self._context()
+        key = None
         with self._cv:
+            self._ctx_now = ctx
             why = self._observe(utterance, revision, text)
             if why:
                 return GateResult("ignored", utterance, revision, text, reason=why)
             if not text or (self._pred and self._valid(self._pred.key)) or \
                     (self._in_flight and self._current(self._in_flight)):
-                return GateResult("unchanged", utterance, revision, text)
-            if self._in_flight is not None:
+                action = "unchanged"
+            elif self._in_flight is not None:
                 if self._pending is not None:
                     self.stats.coalesced += 1
                 self._pending = (utterance, revision, text)
-                return GateResult("queued", utterance, revision, text)
-            key = self._dispatch()
-        self._spawn(lambda: self._run(key))
-        return GateResult("dispatched", utterance, revision, text)
+                action = "queued"
+            else:
+                key = self._dispatch()
+                action = "dispatched"
+        if key is not None:
+            self._spawn(lambda: self._run(key))
+        self._attach_bundle()
+        return GateResult(action, utterance, revision, text)
 
     def on_final(self, utterance: int, revision: int, text: str) -> GateResult:
         text = _clean(text)
         if is_stop(text):  # before any bookkeeping, so nothing can get in the way of a stop
+            self._latch_stop(utterance)
             return GateResult("stop", utterance, revision, text, reason="stop word heard")
         _check_ids(utterance, revision)
         deadline = time.monotonic() + self._final_wait_s
@@ -233,14 +258,17 @@ class SpeculationGate:
                 return GateResult("ignored", utterance, revision, text, reason=why)
             self._final, self._pending = True, None
             # Single flight: wait for the request already out. If it is about this same text, reuse its answer.
-            while self._in_flight is not None and self._utt == utterance:
+            while self._in_flight is not None and self._utt == utterance and not self._is_stopped(utterance):
                 left = deadline - time.monotonic()
                 if left <= 0:
                     return GateResult("clarify", utterance, revision, text,
                                       reason="The intent model did not answer in time. Please say it again.")
                 self._cv.wait(left)
-            if self._utt != utterance:
-                return GateResult("ignored", utterance, revision, text, reason="a newer utterance started")
+        ctx = self._context()   # on the caller's thread, with the lock released
+        with self._cv:
+            self._ctx_now = ctx
+            if self._utt != utterance or self._is_stopped(utterance):
+                return GateResult("ignored", utterance, revision, text, reason="stopped or superseded")
             if not text:
                 return GateResult("none", utterance, revision, text, reason="I didn't catch anything.")
             pred = self._pred if self._pred and self._current(self._pred.key) else None
@@ -249,32 +277,63 @@ class SpeculationGate:
                 pred = None
             if pred:
                 self.stats.reused += 1
-                return self._decide(pred.key, pred.decision, pred.bundle, reused=True)
-            key = self._dispatch()
-        decision, bundle = self._ask(key, partial=False)
-        with self._cv:
-            self._in_flight = None
-            current = self._current(key)
-            nxt = self._take_pending()   # a newer utterance may have queued a partial meanwhile
-            self._cv.notify_all()
-        if nxt is not None:
-            self._spawn(lambda: self._run(nxt))
-        if decision is None:
-            return GateResult("clarify", utterance, revision, text,
-                              reason="I could not work out what you meant. Please say it again.")
-        if not current:
+                key, decision, bundle, reused = pred.key, pred.decision, pred.bundle, True
+            else:
+                key, reused = self._dispatch(), False
+        if not reused:
+            decision, bundle = self._ask(key, partial=False), None
+            ctx = self._context()
             with self._cv:
-                self.stats.stale_dropped += 1
-            return GateResult("none", utterance, revision, text,
-                              reason="Things changed while I was listening. Please say it again.")
-        return self._decide(key, decision, bundle, reused=False)
+                self._ctx_now = ctx
+                self._in_flight = None
+                stopped = self._is_stopped(utterance)
+                current = self._current(key)
+                nxt = self._take_pending()   # a newer utterance may have queued a partial meanwhile
+                self._cv.notify_all()
+            if nxt is not None:
+                self._spawn(lambda: self._run(nxt))
+            if stopped:
+                return GateResult("ignored", utterance, revision, text, reason="stopped")
+            if decision is None:
+                return GateResult("clarify", utterance, revision, text,
+                                  reason="I could not work out what you meant. Please say it again.")
+            if not current:
+                with self._cv:
+                    self.stats.stale_dropped += 1
+                return GateResult("none", utterance, revision, text,
+                                  reason="Things changed while I was listening. Please say it again.")
+        if bundle is None and self._actionable(text, decision):
+            bundle = self._fetch_bundle(text)
+        return self._decide(key, decision, bundle, reused=reused)
 
     # ---- internals (lock held unless noted) ------------------------------------
+
+    def _read_context(self) -> None:
+        """Caller's thread only, lock NOT held."""
+        ctx = self._context()
+        with self._cv:
+            self._ctx_now = ctx
+
+    def _latch_stop(self, utterance: Any) -> None:
+        """Void all speculation and refuse further transcripts of the stopped utterance. Never raises."""
+        with self._cv:
+            self.stats.stops += 1
+            ids = [u for u in (utterance if _valid_id(utterance) else None, self._utt, self._stopped_utt)
+                   if u is not None]
+            if ids:
+                self._stopped_utt = max(ids)
+            self._pred, self._pending = None, None   # an in-flight answer fails _current() when it lands
+            self._cv.notify_all()
+
+    def _is_stopped(self, utterance: int) -> bool:
+        return self._stopped_utt is not None and utterance <= self._stopped_utt
 
     def _observe(self, utterance: int, revision: int, text: str) -> str | None:
         """Record a transcript revision. Returns why it was ignored, or None."""
         if self._utt is not None and utterance < self._utt:
             return "older utterance"
+        if self._is_stopped(utterance):
+            return "stopped"
         if utterance != self._utt:
             self._utt, self._rev, self._text, self._text_since, self._final = utterance, -1, "", -1, False
             self._pending, self._pred = None, None
@@ -288,16 +347,17 @@ class SpeculationGate:
         return None
 
     def _current(self, key: Key) -> bool:
-        """Does this key still describe what the user has said, against the current memory context?"""
-        return (key.utterance == self._utt and key.text == self._text
+        """Does this key still describe what the user has said, against the latest memory context read?"""
+        return (key.utterance == self._utt and not self._is_stopped(key.utterance)
+                and key.text == self._text
                 and self._text_since <= key.revision <= self._rev
-                and key.context == self._context())
+                and key.context == self._ctx_now)
 
     def _valid(self, key: Key) -> bool:
         return self._current(key) and self._clock() < key.expires_at
 
     def _dispatch(self) -> Key:
-        key = Key(self._utt, self._rev, self._text, self._context(), self._clock() + self._ttl_s)
+        key = Key(self._utt, self._rev, self._text, self._ctx_now, self._clock() + self._ttl_s)
         self._in_flight = key
         self.stats.requests += 1
         return key
@@ -319,44 +379,68 @@ class SpeculationGate:
         """Worth preparing: a confident, complete, directed preset with nothing blocking it."""
         return self._preset_ok(d) and d.ready >= self.thresholds.ready and not any(self._flags(text, d))
 
-    def _ask(self, key: Key, partial: bool) -> tuple[IntentDecision | None, Any]:
-        """Call the intent model (lock NOT held). Returns (None, None) on any failure."""
+    def _ask(self, key: Key, partial: bool) -> IntentDecision | None:
+        """Call the intent model (lock NOT held). Touches nothing but the classifier. None on any failure."""
         try:
             decision = self._classifier(key.text, partial)
             if not isinstance(decision, IntentDecision):
                 raise IntentError("classifier returned no decision")
+            return decision
         except Exception as e:
             log.warning("intent request failed: %s", type(e).__name__)
             with self._cv:
                 self.stats.errors += 1
-            return None, None
-        bundle = None
-        if self._prefetch is not None and self._actionable(key.text, decision):
-            try:
-                bundle = self._prefetch(key.text)
-            except Exception as e:
-                log.warning("memory prefetch failed: %s", type(e).__name__)
-        return decision, bundle
+            return None
+
+    def _fetch_bundle(self, text: str) -> Any:
+        """Caller's thread only, lock NOT held."""
+        if self._prefetch is None:
+            return None
+        try:
+            return self._prefetch(text)
+        except Exception as e:
+            log.warning("memory prefetch failed: %s", type(e).__name__)
+            return None
+
+    def _attach_bundle(self) -> None:
+        """Pre-fetch the memory bundle for a ready prediction. Caller's thread only, lock NOT held."""
+        if self._prefetch is None:
+            return
+        with self._cv:
+            p = self._pred
+            if p is None or p.bundle is not None or not self._valid(p.key) or \
+                    not self._actionable(p.key.text, p.decision):
+                return
+        bundle = self._fetch_bundle(p.key.text)
+        if bundle is None:
+            return
+        ctx = self._context()
+        with self._cv:
+            self._ctx_now = ctx
+            if self._pred is p and self._valid(p.key):   # nothing moved on while fetching
+                self._pred = Prediction(p.key, p.decision, bundle)
 
     def _run(self, key: Key) -> None:
-        """Worker for one partial request (lock NOT held on entry)."""
-        decision, bundle = self._ask(key, partial=True)
+        """Worker for one partial request (lock NOT held on entry). Calls only the classifier and the clock."""
+        decision = self._ask(key, partial=True)
         nxt: Key | None = None
         with self._cv:
             self._in_flight = None
-            if decision is not None:
-                if self._valid(key):
-                    self._pred = Prediction(key, decision, bundle)
-                else:
-                    self.stats.stale_dropped += 1
-            nxt = self._take_pending()
-            self._cv.notify_all()
+            try:
+                if decision is not None:
+                    if self._valid(key):
+                        self._pred = Prediction(key, decision)
+                    else:
+                        self.stats.stale_dropped += 1
+            finally:
+                nxt = self._take_pending()
+                self._cv.notify_all()
         if nxt is not None:
             self._spawn(lambda: self._run(nxt))
 
     def _take_pending(self) -> Key | None:
         p, self._pending = self._pending, None
-        if p is None or self._final or p[0] != self._utt or p[2] != self._text:
+        if p is None or self._final or p[0] != self._utt or p[2] != self._text or self._is_stopped(p[0]):
             return None
         if self._pred and self._valid(self._pred.key):
             return None
@@ -372,13 +456,14 @@ class SpeculationGate:
         if corrected:
             return GateResult("none", reason="You corrected yourself, so nothing will move. Please say it again.",
                               **base)
+        ready = d.ready >= self.thresholds.ready
         if future:
             event = future_event(key.text)
-            if self._preset_ok(d) and event:
+            if self._preset_ok(d) and ready and event:
                 return GateResult("schedule", preset=d.preset, commitment=f"When {event}, {PRESETS[d.preset].request}",
                                   **base)
             return GateResult("clarify", reason="That sounds like something for later. "
                                                 "Say it as 'When <event>, <task>'.", **base)
-        if not self._preset_ok(d) or d.ready < self.thresholds.ready:
+        if not self._preset_ok(d) or not ready:
             return GateResult("none", reason="That is not one of the voice presets.", **base)
         return GateResult("propose", preset=d.preset, bundle=bundle, **base)

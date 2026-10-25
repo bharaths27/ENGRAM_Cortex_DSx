@@ -68,7 +68,11 @@ class PcmWindow:
             self._full = False
 
     def append(self, pcm: bytes, seq: int | None = None) -> None:
-        """Add the next chunk. When seq is given it must be 0, 1, 2, ... in order."""
+        """Add the next chunk. When seq is given it must be 0, 1, 2, ... in order.
+
+        An empty chunk is checked and uses up its sequence number like any other, but stores
+        nothing, so a stream of empty keep-alive chunks cannot grow the window past its bound.
+        """
         if not isinstance(pcm, (bytes, bytearray, memoryview)):
             raise TypeError("pcm must be bytes")
         pcm = bytes(pcm)
@@ -83,8 +87,9 @@ class PcmWindow:
                 # Refuse from here on: accepting a later, smaller chunk would leave a hole mid-utterance.
                 self._full = True
                 raise AudioOverflow(f"utterance longer than {self.max_bytes // (SAMPLE_RATE * SAMPLE_WIDTH)} s")
-            self._chunks.append(pcm)
-            self._size += len(pcm)
+            if pcm:
+                self._chunks.append(pcm)
+                self._size += len(pcm)
             self._next_seq += 1
 
     @property
