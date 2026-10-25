@@ -18,15 +18,25 @@ latest = {"jpg": None, "t": 0.0}
 fresh = threading.Condition()
 
 
-def open_camera(device: str, width: int, height: int):
+def open_camera(device: str, width: int, height: int, fps: int):
     # Some OpenCV builds cannot open V4L2 by path, only by number: /dev/video0 -> 0
     m = re.fullmatch(r"(?:/dev/video)?(\d+)", device)
     cap = cv2.VideoCapture(int(m.group(1)) if m else device, cv2.CAP_V4L2)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))  # MJPG keeps two webcams within USB bandwidth
+    # Compressed MJPG at a modest rate. Raw YUYV video fills the webcam's USB link, and then its own
+    # mic (same cable) gets no bandwidth: video and voice stop working at the same time.
+    mjpg = cv2.VideoWriter_fourcc(*"MJPG")
+    cap.set(cv2.CAP_PROP_FOURCC, mjpg)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_FPS, fps)
+    cap.set(cv2.CAP_PROP_FOURCC, mjpg)  # some drivers drop back to YUYV after a size change
     if not cap.isOpened() or not cap.read()[0]:
         raise SystemExit(f"cannot read {device} (busy or not a camera?). Check `v4l2-ctl --list-devices`.")
+    code = int(cap.get(cv2.CAP_PROP_FOURCC))
+    fmt = "".join(chr((code >> 8 * i) & 0xFF) for i in range(4))
+    print(f"format {fmt} {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
+          f" at {cap.get(cv2.CAP_PROP_FPS):g} fps" + ("" if fmt == "MJPG" else "  (not MJPG: may starve the mic)"),
+          flush=True)
     return cap
 
 
@@ -86,9 +96,10 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=8201)
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
+    ap.add_argument("--fps", type=int, default=15)
     ap.add_argument("--quality", type=int, default=45, help="JPEG quality; lower is faster over a hotspot")
     args = ap.parse_args()
-    cap = open_camera(args.device, args.width, args.height)
+    cap = open_camera(args.device, args.width, args.height, args.fps)
     threading.Thread(target=grab, args=(cap, args.quality), daemon=True).start()
     print(f"camera {args.device} open; serving http://0.0.0.0:{args.port}/stream and /frame", flush=True)
     ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
