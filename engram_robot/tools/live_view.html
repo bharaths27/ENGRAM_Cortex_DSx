@@ -31,5 +31,11 @@ function feed(img,status,path){let n=0;const t0=Date.now();
 document.getElementById('go').onclick=()=>{try{localStorage.setItem('pi',ip.value.trim())}catch(e){}
  if(on)return;on=true;
  feed(document.getElementById('v1'),document.getElementById('s1'),':8200/robot/frame?annotate=false&quality=60');
- feed(document.getElementById('v2'),document.getElementById('s2'),':8201/frame');};
+ stream(document.getElementById('v2'),document.getElementById('s2'),':8201/stream');};
+// Camera 2 is one continuous MJPEG stream: no round trip per frame, so it stays smooth over a hotspot.
+function stream(img,status,path){status.textContent='Connecting...';
+ img.onload=()=>{status.textContent='Live (stream)'};
+ // No stream (older cam_server.py, or not running yet): fall back to fetching single frames.
+ img.onerror=()=>{img.onload=img.onerror=null;feed(img,status,':8201/frame')};
+ img.src='http://'+ip.value.trim()+path+'?t='+Date.now();}
 </script></body></html>
