@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Set up the brain on the Pi. Run ON the Pi:
+#     bash ~/engram_hub/scripts/brainpi_setup.sh
+# Expects ~/engram_hub (the repo) and ~/offline (models, llama.cpp source, and wheels when there
+# is no internet). Uses ~/offline/wheels if present, otherwise installs from the internet.
+# Safe to run again; it skips finished parts.
+set -euo pipefail
+
+HUB=~/engram_hub
+OFF=~/offline
+cd "$HUB"
+
+echo "== 1. Python packages"
+[ -d .venv ] || python3 -m venv .venv
+PIP=(.venv/bin/pip install -q)
+[ -d "$OFF/wheels" ] && PIP+=(--no-index --find-links "$OFF/wheels")
+"${PIP[@]}" -r requirements.txt
+"${PIP[@]}" -r perception/requirements.txt || echo "voice packages skipped"
+"${PIP[@]}" cmake ninja
+
+echo "== 2. Build llama-server (about 15 to 25 minutes on a Pi 4)"
+if ! command -v g++ >/dev/null; then
+    echo "g++ is missing. The model part needs it; the hub still works with the rule planner."
+else
+    SRC=$(ls -d "$OFF"/llama.cpp-*/ 2>/dev/null | head -1 || true)
+    if [ -z "$SRC" ]; then
+        tar -xzf "$OFF"/llama.cpp-*.tar.gz -C "$OFF"
+        SRC=$(ls -d "$OFF"/llama.cpp-*/ | head -1)
+    fi
+    if [ ! -x "$SRC/build/bin/llama-server" ]; then
+        export PATH="$HUB/.venv/bin:$PATH"
+        cmake -S "$SRC" -B "$SRC/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
+        cmake --build "$SRC/build" --target llama-server -j 2    # -j 2 so 4 GB of memory is enough
+    fi
+    ln -sf "$SRC/build/bin/llama-server" ~/llama-server
+    echo "llama-server ready at ~/llama-server"
+fi
+
+echo "== 3. Robot commands, poses and skills into memory (engram.db)"
+.venv/bin/python scripts/load_robot_memory.py
+
+echo "== 4. Tests"
+.venv/bin/python -m pytest -q -p no:warnings 2>&1 | tail -2
+echo "done"

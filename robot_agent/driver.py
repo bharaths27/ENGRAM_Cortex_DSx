@@ -18,9 +18,12 @@ Do not run this driver and the engram_robot server at the same time: both open
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
+
+ARM_CONFIG = Path(__file__).with_name("arm_config.json")
 
 
 class Driver:
@@ -55,20 +58,16 @@ class FakeDriver(Driver):
 
 class HiwonderDriver(Driver):
     # Skid steer: the board takes a duty cycle, not a speed, so moves are timed.
-    ENGRAM_DIR = Path.home() / "engram_robot"
+    # robot_agent/ sits next to engram_robot/ in the home folder. Not Path.home(): under sudo that is /root.
+    ENGRAM_DIR = Path(__file__).resolve().parent.parent / "engram_robot"
     DRIVE_DUTY = 0.4           # same duty spin.py used; keep low until measured
     TURN_DUTY = 0.4
     M_PER_S_AT_DUTY = None     # CHECK: tape measure at DRIVE_DUTY. None = estimate from drive_calib.json
     DEG_PER_S = 90.0           # CHECK: time one full spin at TURN_DUTY, then 360 / seconds
     MAX_SECONDS = 4.0          # never run the wheels longer than this in one step
-    # Arm: MasterPi arm servos are PWM servos on the same board, but no IK library is on the Pi.
-    # Each pose is {servo_id: pulse_us}. CHECK: find ids and pulses with
-    # `python tools/hw_test.py servo <id> <pulse>` in ~/engram_robot, 100 us steps, person watching.
-    POSES: dict[str, dict[int, int]] = {
-        "home": {},
-        "reach_down": {},
-        "carry": {},
-    }
+    # Arm and claw come from arm_config.json (servo ids from Brian; poses saved with
+    # `sudo python3 -m robot_agent.teach_pose`). No IK library is on the Pi.
+    ARM_MOVE_MS = 1000
 
     def __init__(self) -> None:
         sys.path.insert(0, str(self.ENGRAM_DIR))
@@ -80,6 +79,15 @@ class HiwonderDriver(Driver):
         self.motors = HiwonderMotors(self.board, self.calib.left_motor_ids,
                                      self.calib.right_motor_ids, self.calib.motor_signs)
         self.motors.stop()
+        self.arm_cfg = json.loads(ARM_CONFIG.read_text())
+        # Brian saves poses with ~/engram_robot/tools/arm_pose.py. Use them for any pose
+        # still empty here. His "reach" is our "reach_down".
+        brian = self.ENGRAM_DIR / "arm_poses.json"
+        if brian.exists():
+            for name, pulses in json.loads(brian.read_text()).items():
+                name = "reach_down" if name == "reach" else name
+                if not self.arm_cfg["poses"].get(name):
+                    self.arm_cfg["poses"][name] = pulses
 
     def _speed(self) -> float:
         if self.M_PER_S_AT_DUTY:
@@ -105,19 +113,21 @@ class HiwonderDriver(Driver):
         self._run(-d, d, abs(degrees) / self.DEG_PER_S)
 
     def gripper(self, open_: bool) -> None:
-        c = self.calib
-        if c.claw_open_us == c.claw_closed_us:
-            raise RuntimeError("claw pulses not calibrated in drive_calib.json")  # CHECK
-        self.board.set_pwm_servo(c.claw_servo_id, c.claw_open_us if open_ else c.claw_closed_us, 500)
+        claw = self.arm_cfg["claw"]
+        pulse = claw["open_us"] if open_ else claw["closed_us"]
+        self.board.set_pwm_servo(int(claw["servo"]), max(500, min(2500, int(pulse))), 500)
         time.sleep(0.6)
 
     def arm(self, pose: str) -> None:
-        pulses = self.POSES.get(pose)
+        pulses = self.arm_cfg["poses"].get(pose)
         if not pulses:
-            raise RuntimeError(f"arm pose {pose} not measured yet")
-        for servo_id, pulse in pulses.items():
-            self.board.set_pwm_servo(servo_id, pulse, 1000)
-        time.sleep(1.1)
+            raise RuntimeError(f"arm pose {pose} not saved yet; run robot_agent.teach_pose")
+        # Base first, then shoulder, elbow, wrist, so the arm turns before it reaches.
+        order = [str(self.arm_cfg["joints"][j]) for j in ("base", "shoulder", "elbow", "wrist")]
+        for sid in sorted(pulses, key=lambda s: order.index(s) if s in order else 99):
+            self.board.set_pwm_servo(int(sid), max(500, min(2500, int(pulses[sid]))), self.ARM_MOVE_MS)
+            time.sleep(self.ARM_MOVE_MS / 1000 * 0.5)
+        time.sleep(self.ARM_MOVE_MS / 1000)
 
     def stop_all(self) -> None:
         self.motors.stop()

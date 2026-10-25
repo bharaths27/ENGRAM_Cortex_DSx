@@ -79,3 +79,21 @@ def test_lost_robot_counts_as_stopped(engine):
     engine.set_robot(robot)
     p = engine.propose("bring the beaker to the bench")
     assert engine.approve_and_run(p["operation_id"], p["digest"], "me")["outcome"] == "aborted"
+
+
+def test_arm_pose_test_op_only_takes_known_poses():
+    a = RobotAgent(FakeDriver(), ROUTES)
+    assert a.execute("arm_pose", {"pose": "carry"})["status"] == "done"
+    assert a.execute("arm_pose", {"pose": "anything"})["status"] == "failed"
+    assert a.driver.calls == [("arm", "carry")]
+
+
+def test_arm_config_is_valid():
+    import json
+    from pathlib import Path
+
+    cfg = json.loads((Path(__file__).parent.parent / "robot_agent/arm_config.json").read_text())
+    assert cfg["claw"]["servo"] == 1
+    assert 500 <= cfg["claw"]["closed_us"] <= 2500 and 500 <= cfg["claw"]["open_us"] <= 2500
+    assert set(cfg["poses"]) == {"home", "reach_down", "carry"}
+    assert set(cfg["joints"].values()) == {3, 4, 5, 6}

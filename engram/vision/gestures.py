@@ -11,6 +11,8 @@ Three gestures. None of them moves the robot by itself:
                         fresh sighting of that object right away
     thumb out, held  -> PROPOSES "return to rest" (drive to home). Like every plan,
                         it only runs after a person approves it
+    point at a zone tag, held 1 s (opt-in, --point-goto)
+                     -> PROPOSES "go to that zone". Same rule: a person approves it first
 
 Used by `python scripts/overhead_camera.py --gestures` (same camera, same frames as the tag reader).
 The functions below are plain math on hand landmarks so they can be tested without a camera.
@@ -246,16 +248,21 @@ class GestureActions:
     """
 
     def __init__(self, server: str, arena: dict, fps: float, palm_stop: bool = True, thumb_rest: bool = True,
-                 palm_s: float = 0.3, point_s: float = 0.25, thumb_s: float = 0.4, tracker=None):
+                 palm_s: float = 0.3, point_s: float = 0.25, thumb_s: float = 0.4, tracker=None,
+                 point_goto: bool = False, goto_s: float = 1.0):
         frames = lambda s: max(2, round(s * fps))  # noqa: E731
         self.server, self.palm_stop, self.thumb_rest = server.rstrip("/"), palm_stop, thumb_rest
+        self.point_goto = point_goto
         self.rest_zone = arena.get("start_zone", "home")
         self.by_tag = {o["tag"]: o for o in arena["objects"]}
+        self.zone_by_tag = {int(k): v for k, v in arena.get("zone_tags", {}).items()}
         self.tracker = tracker or HandTracker()
         self.palm, self.point, self.thumb = HoldFilter(frames(palm_s)), HoldFilter(frames(point_s)), HoldFilter(frames(thumb_s))
+        self.goto = HoldFilter(frames(goto_s))  # longer hold: this one proposes driving somewhere
         self.hands: list[Hand] = []
         self.ray = None
         self.target = None
+        self.goto_zone = None
 
     def _say(self, msg: str) -> None:
         print(f"  {time.strftime('%H:%M:%S')}  {msg}")
@@ -292,13 +299,28 @@ class GestureActions:
 
         # 3. Pointing -> the object tag closest to the pointing line.
         objects = {d.tag_id: (d.cx, d.cy) for d in detections if d.tag_id in self.by_tag}
-        self.ray, target = None, None
+        zones = {d.tag_id: (d.cx, d.cy) for d in detections if d.tag_id in self.zone_by_tag}
+        self.ray, target, zone_target = None, None, None
         for h in self.hands:
             if h.label == "pointing":
                 tip, direction = pointing_ray(h.landmarks)
                 self.ray = (tip, direction)
                 target = object_pointed_at(tip, direction, objects, touch_radius=0.6 * hand_size(h.landmarks))
+                if target is None:  # an object on the line wins over the zone behind it
+                    zone_target = object_pointed_at(tip, direction, zones)
                 break
+
+        # 4. Pointing at a zone tag, held -> PROPOSE driving there (opt-in). Never an approval.
+        if self.point_goto:
+            self.goto_zone, changed = self.goto.update(None if palm_up else zone_target)
+            if changed and self.goto_zone is not None:
+                zone = self.zone_by_tag[self.goto_zone]
+                try:
+                    r = _post(self.server + "/plan/goto", {"zone": zone})
+                    state = "waiting for approval" if r.get("status") == "proposed" else "rejected by the checker"
+                    self._say(f"POINT -> go to {zone} proposed, {state} (operation {r.get('operation_id')})")
+                except OSError as e:
+                    self._say(f"pointed at {zone} but could not reach the server: {e}")
         self.target, changed = self.point.update(target)
         if changed and self.target is not None:
             obj = self.by_tag[self.target]

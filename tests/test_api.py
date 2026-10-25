@@ -34,3 +34,20 @@ def test_return_to_rest_needs_approval(engine):
     ok = c.post(f"/operations/{p['operation_id']}/approve", json={"digest": p["digest"], "approved_by": "me"})
     assert ok.json()["outcome"] == "success"
     assert c.post("/plan/rest", json={"zone": "moon"}).json()["status"] == "rejected"
+
+
+def test_pending_lists_plans_the_ipad_did_not_ask_for(engine):
+    c = TestClient(create_app(engine))
+    p = c.post("/plan/rest", json={}).json()
+    pending = c.get("/operations/pending").json()
+    assert [x["operation_id"] for x in pending] == [p["operation_id"]]
+    assert pending[0]["digest"] == p["digest"] and pending[0]["source"] == "gesture"
+    c.post(f"/operations/{p['operation_id']}/approve", json={"digest": p["digest"], "approved_by": "me"})
+    assert c.get("/operations/pending").json() == []          # approved plans leave the list
+
+
+def test_return_to_rest_does_not_become_a_skill(engine):
+    c = TestClient(create_app(engine))
+    p = c.post("/plan/rest", json={}).json()
+    c.post(f"/operations/{p['operation_id']}/approve", json={"digest": p["digest"], "approved_by": "me"})
+    assert c.post("/dream/compile").json()["candidates"] == []

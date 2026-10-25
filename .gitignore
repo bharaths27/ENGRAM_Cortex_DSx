@@ -8,3 +8,9 @@ __pycache__/
 *.db-shm
 models/
 .DS_Store
+offline/
+wheels/
+engram_robot/robot.env
+engram_robot/**/*.env
+engram_robot/voice/certs/
+engram_robot/robot_journal.jsonl

@@ -50,6 +50,8 @@ class Skills:
             return None
         plan = json.loads(ep["plan_json"])
         meta = json.loads(ep["evidence_json"] or "{}")
+        if not meta.get("targets"):
+            return None  # nothing was fetched (for example "return to rest"), so there is no fetch skill to learn
         definition = {
             "name": "fetch " + " and ".join(meta.get("targets", [])) + f" to {meta.get('zone')}",
             "targets": sorted(meta.get("targets", [])),

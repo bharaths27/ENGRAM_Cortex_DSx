@@ -122,15 +122,15 @@ class Engine:
 
         check = check_plan(res.plan, self.memory, self.zones)
         plan_digest = digest(res.plan)
-        meta = {"targets": res.targets, "zone": res.zone, "source": res.source, "digest": plan_digest,
-                "check": check.to_dict(), "bundle": bundle.to_dict()}
+        meta = {"targets": res.targets, "zone": res.zone, "source": res.source, "planner_note": res.note,
+                "digest": plan_digest, "check": check.to_dict(), "bundle": bundle.to_dict()}
         status = "proposed" if check.ok else "rejected"
         self._episode(episode_id, request, res.plan, meta, status, None if check.ok else "; ".join(check.errors), res,
                       skill_id=skill["id"] if skill else None)
         return {
             "operation_id": episode_id, "status": status, "plan": res.plan, "digest": plan_digest,
             "check": check.to_dict(), "memory": bundle.to_dict(), "source": res.source,
-            "planner_calls": res.planner_calls, "planning_ms": round(res.planning_ms, 3),
+            "planner_note": res.note, "planner_calls": res.planner_calls, "planning_ms": round(res.planning_ms, 3),
         }
 
     def propose_fixed(self, goal: str, steps: list[dict[str, Any]], source: str) -> dict[str, Any]:
@@ -156,6 +156,12 @@ class Engine:
         When the robot adapter gets an arm rest pose, add it to capabilities.py and to these steps.
         """
         return self.propose_fixed(f"return to rest at {zone}", [{"op": "go_to_zone", "args": {"zone": zone}}],
+                                  source="gesture")
+
+    def propose_goto(self, zone: str) -> dict[str, Any]:
+        """Someone pointed at a zone tag: drive there. A proposal like any plan; the gesture
+        is never the approval. An unknown zone comes back rejected by the checker."""
+        return self.propose_fixed(f"go to {zone} (pointed at)", [{"op": "go_to_zone", "args": {"zone": zone}}],
                                   source="gesture")
 
     def _episode(self, episode_id: str, request: str, plan: dict[str, Any] | None, meta: dict[str, Any],
@@ -222,6 +228,25 @@ class Engine:
 
     def test_skill(self, skill_id: str) -> dict[str, Any]:
         return self.skills.test(skill_id, lambda p: check_plan(p, self.memory, self.zones)).to_dict()
+
+    def pending(self, max_age_s: float = 300.0) -> list[dict[str, Any]]:
+        """Plans waiting for a person's approval, newest first.
+
+        Lets the iPad show plans it did not ask for itself: a gesture's "return to rest",
+        or a future task whose trigger fired. Only recent ones, so old unapproved
+        proposals (for example from a test run) do not pile up on screen.
+        """
+        rows = self.conn.execute(
+            "SELECT id, request, plan_json, evidence_json, started_at FROM episode "
+            "WHERE outcome = 'proposed' AND started_at >= ? ORDER BY started_at DESC",
+            (now() - max_age_s,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            meta = json.loads(r["evidence_json"] or "{}")
+            out.append({"operation_id": r["id"], "request": r["request"], "plan": json.loads(r["plan_json"]),
+                        "digest": meta.get("digest"), "source": meta.get("source"), "planner_note": meta.get("planner_note", ""), "proposed_at": r["started_at"]})
+        return out
 
     def events(self, limit: int = 200) -> list[dict[str, Any]]:
         return [dict(r) for r in self.conn.execute(

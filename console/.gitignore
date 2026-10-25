@@ -1,0 +1,27 @@
+__pycache__/
+.venv/
+data/
+certs/*.key
+models/*.bin
+models/*.onnx
+models/*.onnx.json
+models/*.gguf
+vendor/
+# dev/test-only JS deps (fast-check for hud-redesign property tests);
+# never loaded by the offline console, kept out of the served web/ path.
+node_modules/
+package-lock.json
+# NOTE: never ignore .kiro/ (hackathon rule)
+# dev/test-only Node deps (fast-check for tests-js/; never served, never loaded by the console)
+tests-js/node_modules/
+
+# --- hardening for public push (added before first push) ---
+# test caches
+.hypothesis/
+.pytest_cache/
+# root-level camera captures (not part of the app)
+/cam*.jpg
+/pi_cam.jpg
+# cert serial + self-signed CA/server certs (keys already ignored above)
+certs/*.srl
+certs/*.crt

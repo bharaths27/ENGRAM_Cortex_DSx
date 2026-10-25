@@ -11,6 +11,7 @@ The planner only proposes. It never talks to the robot.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import urllib.request
@@ -23,8 +24,18 @@ from .memory import Memory, MemoryBundle
 REFUSE_WORDS = (
     "delete", "erase", "wipe", "forget everything", "disable stop", "turn off stop",
     "throw", "pour", "hit", "break", "override",
+    # Disposal: the robot has no disposal capability, so these must refuse instead of planning a move (EC15 t08.2/t08.3).
+    "dump", "get rid of", "dispose", "discard", "trash", "garbage", "bin it",
 )
+# Future intent that did not parse as "When/Once/After/As soon as X, do Y" must never become an immediate move
+# (EC15 t03.x): it is refused with a hint to phrase it as a future task, which the engine schedules instead.
+FUTURE_HINTS = re.compile(
+    r"\b(when|whenever|once|after|as soon as|until|later|tomorrow|tonight|in \d+ (?:seconds?|minutes?|hours?))\b"
+)
+# "Do not move Sample B" is an instruction NOT to act. Without this it planned a move of Sample B.
+NEGATION = re.compile(r"\b(do not|don'?t|never|no need to)\b")
 DEFAULT_ZONE = "bench"
+log = logging.getLogger("engram.planner")
 
 
 @dataclass
@@ -33,7 +44,8 @@ class PlanResult:
     refused: str | None = None
     planner_calls: int = 0
     planning_ms: float = 0.0
-    source: str = "rules"          # rules | model | skill
+    source: str = "rules"          # rules | model | fallback (model failed, rules used) | skill
+    note: str = ""                 # why the model was not used, or the start of its raw reply
     targets: list[str] = field(default_factory=list)
     zone: str | None = None
 
@@ -43,6 +55,14 @@ def refusal(request: str) -> str | None:
     for w in REFUSE_WORDS:
         if re.search(rf"\b{re.escape(w)}\b", low):
             return f"I will not do that: '{w}' is not something this robot is allowed to do."
+    neg = NEGATION.search(low.replace("\u2019", "'"))
+    if neg:
+        return (f"You said '{neg.group(1)}', so I will not move anything. "
+                "To make it a rule, say 'Remember that ...'.")
+    hint = FUTURE_HINTS.search(low)
+    if hint:
+        return (f"That sounds like something to do later ('{hint.group(1)}'), so I will not move now. "
+                "Say it as 'When <event>, <task>' and I will schedule it.")
     return None
 
 
@@ -106,6 +126,27 @@ class RulePlanner:
                           source="rules", targets=targets, zone=zone)
 
 
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "goal": {"type": "string"},
+        "steps": {"type": "array", "maxItems": 12, "items": {
+            "type": "object",
+            "properties": {"op": {"type": "string"}, "args": {"type": "object"}},
+            "required": ["op", "args"]}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["goal", "steps", "evidence"],
+}
+
+
+def extract_json(text: str) -> dict | None:
+    """The JSON object in a model reply. Qwen3 may think first; drop <think> blocks before parsing."""
+    text = re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.S)
+    m = re.search(r"\{.*\}", text, re.S)
+    return json.loads(m.group(0)) if m else None
+
+
 class LlamaCppPlanner:
     """Ask a local llama.cpp server for the plan. Falls back to rules on any problem."""
 
@@ -124,7 +165,7 @@ class LlamaCppPlanner:
             f"Allowed actions: {json.dumps(describe_all())}\n"
             f"Zones: {sorted(self.zones)}\n"
             f"Memory: {json.dumps(bundle.to_dict())}\n"
-            f"Request: {request}\nJSON:"
+            f"Request: {request} /no_think\nJSON:"
         )
 
     def plan(self, request: str, bundle: MemoryBundle, memory: Memory) -> PlanResult:
@@ -132,20 +173,29 @@ class LlamaCppPlanner:
         if why:
             return PlanResult(None, refused=why)
         t0 = time.perf_counter()
-        body = json.dumps({"prompt": self._prompt(request, bundle), "n_predict": 512, "temperature": 0}).encode()
+        # json_schema makes llama.cpp stop as soon as the plan object closes; without it the model
+        # kept writing prose until n_predict (measured on the Pi 5: 512 tokens, 100 s wasted).
+        body = json.dumps({"prompt": self._prompt(request, bundle), "n_predict": 384, "temperature": 0,
+                           "json_schema": PLAN_SCHEMA}).encode()
+        text, why = "", ""
         try:
             req = urllib.request.Request(self.url, body, {"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
                 text = json.loads(r.read())["content"]
-            m = re.search(r"\{.*\}", text, re.S)
-            plan = json.loads(m.group(0)) if m else None
-        except Exception:
-            plan = None
+            log.info("model reply starts: %r", text[:200])
+            plan = extract_json(text)
+            if not isinstance(plan, dict):
+                why = "model reply had no JSON plan"
+        except Exception as e:
+            plan, why = None, f"model call failed: {type(e).__name__}: {e}"
         ms = (time.perf_counter() - t0) * 1000
         if not isinstance(plan, dict):
             res = self.fallback.plan(request, bundle, memory)
             res.planner_calls += 1
             res.planning_ms += ms
+            if res.plan is not None:
+                res.source = "fallback"
+            res.note = f"{why}; reply starts: {text[:200]!r}" if text else why
             return res
-        return PlanResult(plan, planner_calls=1, planning_ms=ms, source="model",
+        return PlanResult(plan, planner_calls=1, planning_ms=ms, source="model", note=f"reply starts: {text[:200]!r}",
                           targets=targets_in(request, memory), zone=find_zone(request, self.zones))
