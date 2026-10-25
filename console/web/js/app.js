@@ -760,15 +760,19 @@
   requestAnimationFrame(frameLoop);
 
   // -------------------------------------------------------------- commands
+  // Run a command as part of `turn` (the speech turn it came from), so any
+  // speech it causes is credited to that turn.
+  async function runCommand(text, source, turn) {
+    try {
+      return await VOICE.track(api("POST", "/commands", { text, source }), turn);
+    } catch (e) { FX.toast("Command failed: " + e.message, "red"); }
+  }
   async function send(text, source) {
     text = (text || "").trim();
     if (!text) return;
     FX.play("blip");
     $("#cmd").value = "";
-    try {
-      const r = await api("POST", "/commands", { text, source: source || "typed" });
-      return r;
-    } catch (e) { FX.toast("Command failed: " + e.message, "red"); }
+    return runCommand(text, source || "typed", VOICE.turn()); // typed: the turn current when typed
   }
   $("#cmd-form").addEventListener("submit", (e) => { e.preventDefault(); send($("#cmd").value); $("#cmd").blur(); });
   $("#quick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) send(b.dataset.cmd); });
@@ -779,7 +783,8 @@
   async function micDown(e) {
     e.preventDefault();
     if (!VOICE.micAvailable()) { FX.toast(window.isSecureContext ? "Recording not supported here. Type instead." : "Mic needs HTTPS with the ENGRAM cert trusted. Typing still works.", "amber"); return; }
-    try { await VOICE.startRec($("#wave")); recOn = true; mic.classList.add("rec"); FX.play("rec"); VOICE.cancel(); $("#cmd-hint").textContent = "listening… release to send"; }
+    // startRec silences the robot (new speech turn) before the mic opens.
+    try { await VOICE.startRec($("#wave")); recOn = true; mic.classList.add("rec"); FX.play("rec"); $("#cmd-hint").textContent = "listening… release to send"; }
     catch (err) { FX.toast("Mic: " + err.message + ". Typing still works.", "amber"); }
   }
   async function micUp(e) {
@@ -789,13 +794,11 @@
     $("#cmd-hint").textContent = "transcribing locally…";
     const a = await VOICE.stopRec();
     if (!a || a.blob.size < 1500) { $("#cmd-hint").textContent = "too short · hold while speaking"; return; }
-    const fd = new FormData();
-    fd.append("audio", a.blob, "speech" + a.ext);
-    fd.append("auto", "1");
     try {
-      const r = await fetch("/stt", { method: "POST", body: fd });
-      const j = await r.json();
-      if (!j.ok) { FX.toast("Speech-to-text unavailable: type the command.", "amber"); $("#cmd-hint").textContent = "STT offline · typed works"; return; }
+      // Runs in the turn this recording started; dropped if a newer one began meanwhile.
+      const v = await VOICE.voiceCommand(a, (text, turn) => runCommand(text, "voice", turn));
+      if (v.status === "unavailable") { FX.toast("Speech-to-text unavailable: type the command.", "amber"); $("#cmd-hint").textContent = "STT offline · typed works"; return; }
+      if (v.status === "dropped") return; // a newer turn owns the mic and the hint now
       $("#cmd-hint").textContent = "heard via whisper.cpp (local)";
     } catch (err) { FX.toast("STT failed: " + err.message, "red"); }
   }

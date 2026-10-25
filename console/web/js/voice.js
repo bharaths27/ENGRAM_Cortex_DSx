@@ -1,9 +1,13 @@
 /* Voice: speaking (Piper on the Pi, else iPad on-device speechSynthesis) and
    hold-to-talk (MediaRecorder -> /stt -> whisper.cpp). Speech never blocks
-   motion: everything here is fire and forget. */
+   motion: everything here is fire and forget.
+   All playback goes through window.SPEECH (speech_epoch.mjs, set up in
+   index.html before this script runs): pressing talk starts a new turn, which
+   silences the robot at once, and a line from an older turn never plays. */
 (function () {
-  const V = { muted: false, speaking: false };
-  const q = [];
+  const V = { muted: false, speaking: false, listening: false };
+  const ctl = window.SPEECH;
+  const q = [];   // { text, epoch }
   let piperOk = true;
   let iosVoice = null;
 
@@ -15,40 +19,45 @@
   if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 
   V.say = function (text) {
-    if (V.muted || !text) return;
-    q.push(text);
+    if (V.muted || !text || V.listening) return; // the user has the floor
+    const epoch = ctl.incomingEpoch();
+    if (epoch !== ctl.current()) return;          // reply to a turn the user already replaced
+    q.push({ text, epoch });
     if (q.length > 3) q.splice(0, q.length - 3); // drop stale lines, never lag behind reality
     if (!V.speaking) next();
   };
   V.cancel = function () {
     q.length = 0;
-    try { speechSynthesis.cancel(); } catch (e) {}
-    if (V._audio) { V._audio.pause(); V._audio = null; }
+    ctl.stop();
     V.speaking = false;
   };
+  // Push-to-talk start: the robot stops talking now, before the mic opens.
+  V.newTurn = function () {
+    q.length = 0;
+    V.speaking = false;
+    return ctl.newTurn();
+  };
+  // Tag each request with the turn that produced it, so its late speech can be
+  // told apart. The turn is passed explicitly, never read when the request goes out.
+  V.turn = () => ctl.current();
+  V.track = (promise, turn) => ctl.track(promise, turn);
 
+  // A "stale" outcome means a newer turn or a stop owns the queue: do nothing.
   function next() {
-    const text = q.shift();
-    if (!text) { V.speaking = false; return; }
+    const item = q.shift();
+    if (!item) { V.speaking = false; return; }
     V.speaking = true;
     if (piperOk) {
-      const a = new Audio("/tts?text=" + encodeURIComponent(text));
-      V._audio = a;
-      let started = false;
-      a.onplaying = () => (started = true);
-      a.onended = () => next();
-      a.onerror = () => { if (!started) { piperOk = false; browserSay(text); } else next(); };
-      a.play().catch(() => { piperOk = false; browserSay(text); });
-    } else browserSay(text);
+      ctl.playUrl(item.epoch, "/tts?text=" + encodeURIComponent(item.text)).then((r) => {
+        if (r === "failed") { piperOk = false; browserSay(item); }
+        else if (r !== "stale") next();
+      });
+    } else browserSay(item);
   }
-  function browserSay(text) {
-    if (!("speechSynthesis" in window)) { next(); return; }
-    const u = new SpeechSynthesisUtterance(text);
-    if (iosVoice) u.voice = iosVoice;
-    u.rate = 1.05; u.pitch = 0.95;
-    u.onend = () => next();
-    u.onerror = () => next();
-    speechSynthesis.speak(u);
+  function browserSay(item) {
+    ctl.speakText(item.epoch, item.text, { voice: iosVoice, rate: 1.05, pitch: 0.95 }).then((r) => {
+      if (r !== "stale") next();
+    });
   }
   V.unlock = function () {
     try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch (e) {}
@@ -56,16 +65,24 @@
 
   // ---------------- microphone ----------------
   V.micAvailable = () => !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
-  let rec = null, chunks = [], stream = null, analyser = null, raf = 0;
+  // rec = { mr, chunks, turn } for the recording in progress. Each recording
+  // keeps its own chunks and turn, so a new press while the last recorder is
+  // still stopping cannot mix the two up.
+  let rec = null, stream = null, analyser = null, raf = 0;
 
   V.startRec = async function (waveCanvas) {
     if (!V.micAvailable()) throw new Error(window.isSecureContext ? "MediaRecorder not supported" : "mic needs HTTPS (trusted cert)");
-    stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-    const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
-    rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
-    chunks = [];
-    rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-    rec.start();
+    const turn = V.newTurn();
+    V.listening = true;
+    try {
+      stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+      const mr = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+      const chunks = [];
+      mr.ondataavailable = e => e.data.size && chunks.push(e.data);
+      mr.start();
+      rec = { mr, chunks, turn };
+    } catch (err) { V.listening = false; throw err; }
     const ctx = FX.ctx();
     if (ctx && waveCanvas) {
       const src = ctx.createMediaStreamSource(stream);
@@ -74,17 +91,36 @@
       drawWave(waveCanvas);
     }
   };
+  // Resolves { blob, ext, turn }: turn is the one this recording started.
   V.stopRec = function () {
+    V.listening = false;
+    cancelAnimationFrame(raf);
+    const r = rec;
+    rec = null;
     return new Promise((resolve) => {
-      cancelAnimationFrame(raf);
-      if (!rec) return resolve(null);
-      rec.onstop = () => {
-        const type = rec.mimeType || "audio/mp4";
-        resolve({ blob: new Blob(chunks, { type }), ext: /mp4|aac|m4a/.test(type) ? ".m4a" : ".webm" });
-        rec = null;
+      if (!r) return resolve(null);
+      r.mr.onstop = () => {
+        const type = r.mr.mimeType || "audio/mp4";
+        resolve({ blob: new Blob(r.chunks, { type }), ext: /mp4|aac|m4a/.test(type) ? ".m4a" : ".webm", turn: r.turn });
       };
-      rec.stop();
+      r.mr.stop();
     });
+  };
+  // Transcribe a stopped recording (auto=0: transcript only, the server runs
+  // nothing) and hand the text to runCommand(text, turn) with the turn that
+  // recorded it. If a newer push-to-talk turn began while it was being
+  // transcribed, the transcript is dropped and never run.
+  // Resolves { status: "sent" | "dropped" | "unavailable", text, reason }.
+  V.voiceCommand = async function (a, runCommand) {
+    const fd = new FormData();
+    fd.append("audio", a.blob, "speech" + a.ext);
+    fd.append("auto", "0");
+    const r = await fetch("/stt", { method: "POST", body: fd });
+    const j = await r.json();
+    if (!j.ok) return { status: "unavailable", reason: j.reason };
+    if (a.turn !== ctl.current()) return { status: "dropped", text: j.text };
+    runCommand(j.text, a.turn);
+    return { status: "sent", text: j.text };
   };
   function drawWave(c) {
     const g = c.getContext("2d");
